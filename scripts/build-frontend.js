@@ -145,11 +145,15 @@ const tail = html.slice(script2.end);
 const indexHtml =
   head +
   '<link rel="stylesheet" href="app.css">' +
+  // mobile.css is hand-maintained and must load after app.css so its
+  // overrides win on narrow screens without needing !important
+  '<link rel="stylesheet" href="mobile.css">' +
   between +
   // api.js first: it starts the fetch and defines window.CRM
   '<script src="api.js"></script>\n' +
   '<script src="app.js"></script>\n' +
-  '<script src="boot.js"></script>' +
+  '<script src="boot.js"></script>\n' +
+  '<script src="mobile.js"></script>' +
   tail;
 
 fs.mkdirSync(WEB, { recursive: true });
@@ -170,6 +174,17 @@ for (const p of applied) console.log('    - ' + p);
 console.log('\n  written to web/:');
 for (const f of ['index.html', 'app.css', 'app.js', 'boot.js']) {
   console.log(`    ${f.padEnd(12)} ${size(f)}`);
+}
+
+// Hand-maintained files this build only links to - warn loudly if one has
+// gone missing, otherwise the page silently loses its mobile layout.
+console.log('\n  hand-maintained (not generated):');
+for (const f of ['api.js', 'mobile.css', 'mobile.js']) {
+  if (fs.existsSync(path.join(WEB, f))) {
+    console.log(`    ${f.padEnd(12)} ${size(f)}`);
+  } else {
+    fail(`${f} is missing from web/ but index.html references it`);
+  }
 }
 
 const leftover = (app + boot).match(/localStorage\.(get|set|remove)Item\(\s*KEY/g);

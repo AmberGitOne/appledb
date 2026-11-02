@@ -95,11 +95,13 @@ server/
     reports.js          aggregate queries for the dashboards
     audit.js            read the audit trail
 web/
-  index.html            the prototype markup
-  app.css               the prototype styles
-  app.js                the prototype logic, persistence re-pointed at the API
-  boot.js               screen routing and the role switcher
+  index.html            the prototype markup          (generated)
+  app.css               the prototype styles          (generated)
+  app.js                the prototype logic, persistence re-pointed at the API (generated)
+  boot.js               screen routing and the role switcher (generated)
   api.js                the API client that replaced localStorage
+  mobile.css            phone and tablet layout
+  mobile.js             the navigation drawer
 scripts/
   build-frontend.js     regenerates web/ from the prototype HTML
   smoke-test.js         45-assertion end-to-end test
@@ -107,6 +109,34 @@ data/
   seed.json             demo data extracted from the prototype
   crm.db                the SQLite database (created by npm run setup)
 ```
+
+---
+
+## On a phone
+
+The app is usable on a phone and a tablet, not just a desktop.
+
+The prototype was built at a fixed 1440px and, below 1024px, simply hid the
+sidebar and replaced it with a horizontal strip containing all 77
+destinations. `web/mobile.css` and `web/mobile.js` replace that:
+
+- the real sidebar becomes an off-canvas **drawer** - tap the menu button,
+  tap a destination, or swipe left / press Escape / tap the backdrop to close
+- wide tables scroll sideways inside their card instead of being clipped
+- KPI tiles wrap by available width: 1 up at 320px, 2 up on a normal phone,
+  4 up on a tablet
+- step bars and tab strips scroll horizontally rather than stacking
+- form fields render at 16px so iOS does not zoom the page on focus
+- tap targets are at least 40px
+- layout respects notch safe areas
+
+Verified at 320, 360, 375 and 768px: no clipped content on any of 20 screens,
+and no horizontal page scroll.
+
+Both files are hand-maintained. `web/index.html`, `app.css`, `app.js` and
+`boot.js` are **generated** by `scripts/build-frontend.js`, so mobile styles
+must never be folded into `app.css` - a rebuild would erase them. The build
+links both files and fails loudly if either goes missing.
 
 ---
 

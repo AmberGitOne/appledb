@@ -1,0 +1,251 @@
+/* ===================================================================
+   Mobile layout.
+
+   Loaded after app.css, so plain overrides win without !important.
+   app.css is generated from the prototype by scripts/build-frontend.js -
+   this file is hand-maintained and must never be folded into it.
+
+   Two breakpoints:
+     <= 1024px   the rail is already hidden by app.css, so this is where
+                 the drawer takes over (covers tablets and phones)
+     <=  560px   phone-only tightening
+   =================================================================== */
+
+/* ---------- 0. elements injected by mobile.js ----------
+   These exist in the DOM at every width, so they must be hidden by default.
+   Without this the menu button renders unstyled in the desktop top bar. */
+#nav-toggle,
+#nav-backdrop { display: none; }
+
+/* ---------- 1. tablet and phone ---------- */
+@media (max-width: 1024px) {
+
+  html, body { overflow-x: hidden; }
+
+  .app {
+    width: 100%;
+    min-height: 100dvh;      /* dvh: excludes the mobile browser chrome */
+    min-width: 0;
+  }
+
+  /* ---- the rail becomes an off-canvas drawer ---- */
+  .rail {
+    display: flex !important;        /* app.css hides it outright below 1024 */
+    position: fixed;
+    inset: 0 auto 0 0;
+    width: min(282px, 84vw);
+    z-index: 200;
+    transform: translateX(-100%);
+    transition: transform .22s ease;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    padding-bottom: env(safe-area-inset-bottom);
+    box-shadow: 0 0 40px rgba(5, 12, 40, .3);
+  }
+  body.nav-open .rail { transform: translateX(0); }
+
+  #nav-backdrop {
+    display: block;
+    position: fixed;
+    inset: 0;
+    z-index: 190;
+    background: rgba(10, 18, 40, .48);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity .22s ease;
+  }
+  body.nav-open #nav-backdrop { opacity: 1; pointer-events: auto; }
+  body.nav-open { overflow: hidden; }
+
+  /* Bigger hit areas inside the drawer. */
+  .rail .nav,
+  .rail .sechd { min-height: 42px; padding-top: 9px; padding-bottom: 9px; }
+  .rail .secbody .nav { min-height: 40px; }
+
+  /* The 77-item horizontal strip is unusable - the drawer replaces it. */
+  .mobilenav { display: none !important; }
+
+  /* ---- top bar ---- */
+  .top {
+    height: auto;
+    min-height: 56px;
+    gap: 10px;
+    padding: 8px 12px;
+    padding-top: calc(8px + env(safe-area-inset-top));
+    position: sticky;
+    top: 0;
+    z-index: 120;
+    flex-wrap: nowrap;
+  }
+  .top h1 { font-size: 15px; line-height: 1.25; }
+  .top .crumb { font-size: 11px; }
+  /* the title block shrinks before anything else does */
+  .top > div:first-of-type { min-width: 0; flex: 1 1 auto; }
+  .top h1, .top .crumb {
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+
+  #nav-toggle {
+    flex: none;
+    width: 38px; height: 38px;
+    display: flex; align-items: center; justify-content: center;
+    border: 1px solid #e2e7ee; border-radius: 9px;
+    background: #fff; color: #334; cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+  }
+  #nav-toggle:active { background: #eef2f8; }
+
+  .search { display: none; }
+  /* The label carries an inline margin-left in the markup, and the select
+     is styled by #id in app.css - neither yields to a plain class rule. */
+  .top .vwrap { margin-left: auto !important; flex: none; }
+  #viewas { max-width: 124px; }
+
+  /* ---- content ---- */
+  .content { padding: 14px 12px 28px; padding-bottom: calc(28px + env(safe-area-inset-bottom)); }
+
+  /* ---- step bar and tab strips scroll sideways instead of stacking ---- */
+  .flowbar, .tabs, .mailbar:not(.desks):not(.filters) {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+    scrollbar-width: none;
+  }
+  .flowbar::-webkit-scrollbar,
+  .tabs::-webkit-scrollbar,
+  .mailbar::-webkit-scrollbar { display: none; }
+  .flowbar { padding: 8px 12px; gap: 6px; }
+  .flowbar > * { flex: none; }
+  .fstep { padding: 7px 12px; font-size: 12px; }
+  .tabs { padding: 0 10px; }
+  .tab { padding: 10px 13px; flex: none; }
+
+  .mailbar { padding: 8px 12px; gap: 8px; }
+  .mailbar.desks, .mailbar.filters { flex-wrap: wrap; }
+  .mailbar > * { flex: none; }
+
+  /* ---- KPI rows: wrap instead of squeezing six into one line ----
+     A length basis rather than a percentage, because app.css forces
+     `gap:16px !important` on these rows and any `calc(50% - n)` has to
+     guess that gap exactly or every tile wraps onto its own line.
+     140px lets the count fall out of the width: 1 up at 320, 2 up on a
+     normal phone, 4 up on a tablet. */
+  .row { flex-wrap: wrap; }
+  .row > .kpi { flex: 1 1 140px; min-width: 0; }
+  .kpi { padding: 12px 12px 13px; }
+  .kpi .v { font-size: 22px; }
+  .kpi .k { font-size: 9.5px; }
+
+  /* ---- grids collapse ---- */
+  .stack { grid-template-columns: minmax(0, 1fr); gap: 14px; }
+  .grid3, .grid4, .grid6 { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+
+  /* ---- form fields go full width ---- */
+  .fld, .fld.w1, .fld.w2 { min-width: 0; flex: 1 1 100%; }
+
+  /* ---- tables scroll sideways rather than being clipped ----
+     .roomy is the common table class here (93 of them); .gm is the mail
+     list. Both are far wider than a phone, so the card they sit in becomes
+     the horizontal scroller. */
+  .card:has(table),
+  .card:has(.gm) {
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+  }
+  /* app.css pins every table to width:100%, so instead of overflowing the
+     card they squeeze and clip their own cells. Letting them size to their
+     content is what makes the card's horizontal scroll do anything. */
+  .card table { width: auto; min-width: 100%; }
+
+  .gm { table-layout: auto; min-width: 620px; }
+  .gm td, .gm th { white-space: nowrap; }
+  .gm tbody tr td { padding-top: 10px; padding-bottom: 10px; }  /* taller rows to tap */
+
+  /* .roomy's 26px side padding costs more than the data is worth here */
+  .roomy td { padding: 11px 14px; }
+  .roomy th { padding: 9px 14px; }
+  .roomy td, .roomy th { white-space: nowrap; }
+
+  /* ---- panels and overlays ---- */
+  #nb-panel {
+    top: 62px; right: 10px; left: 10px;
+    width: auto; max-height: 68vh;
+  }
+  .cmpw, .cmpw.max {
+    right: 0 !important; left: 0; bottom: 0;
+    width: 100vw; max-width: 100vw;
+    border-radius: 0;
+    max-height: 100dvh; height: 100dvh;
+  }
+  #docsheet { padding: 22px 16px 28px; }
+  #docbar { padding: 0 4px; }
+
+  /* comfortable default tap target */
+  .btn { min-height: 36px; display: inline-flex; align-items: center; }
+}
+
+/* iOS zooms the whole page when a focused field is smaller than 16px, and
+   the prototype's field rules are deeply specific (.crow input, .wmenu
+   input, and so on). Winning that on specificity alone would mean mirroring
+   every one of those selectors, so this forces the single property instead.
+   Checkboxes and radios keep their own sizing. */
+@media (max-width: 1024px) {
+  input:not([type="checkbox"]):not([type="radio"]),
+  select,
+  textarea { font-size: 16px !important; }
+}
+
+/* ---------- 2. phones ---------- */
+@media (max-width: 560px) {
+
+  .top { gap: 8px; padding: 7px 10px; padding-top: calc(7px + env(safe-area-inset-top)); }
+  .top h1 { font-size: 14.5px; }
+
+  /* the theme swatches and the demo-reset button are desk-side niceties */
+  .top .themes { display: none; }
+  .top #reset-demo { display: none; }
+
+  /* keep the avatar, drop the name and role text */
+  .me { padding-left: 8px; gap: 0; }
+  .me > div:not(.avatar) { display: none; }
+
+  #viewas { max-width: 104px; font-size: 12px; }
+
+  .content { padding: 12px 10px 24px; padding-bottom: calc(24px + env(safe-area-inset-bottom)); }
+
+  /* single column everywhere that still had two */
+  .grid3, .grid4, .grid6 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+
+  .ch { padding: 10px 12px; flex-wrap: wrap; row-gap: 4px; }
+  .content .row:has(.kpi) { padding: 12px; }
+  .ch h2 { font-size: 15px; }
+  .ch .sub { font-size: 11.5px; }
+  .pad { padding: 10px 12px; }
+
+  .fstep { font-size: 11.5px; padding: 7px 11px; }
+
+  /* the sign-in overlay sits inside the gutter on a narrow screen */
+  #crm-login > form { width: 100%; padding: 26px 20px; }
+
+  /* the floating save pill must not cover the thumb zone */
+  #crm-sync { right: 10px; bottom: calc(10px + env(safe-area-inset-bottom)); }
+}
+
+/* ---------- 3. very small phones ---------- */
+@media (max-width: 380px) {
+  .grid3, .grid4, .grid6 { grid-template-columns: minmax(0, 1fr); }
+
+  /* The role switcher stays: it is how the whole demo is explored, and a
+     360px Android is a mainstream size. The caption goes instead, and the
+     page title truncates. */
+  .top .vwrap > span { display: none; }
+  .top .vwrap { padding-left: 6px; }
+  #viewas { max-width: 92px; font-size: 11.5px; }
+  .top { gap: 6px; padding-left: 8px; padding-right: 8px; }
+}
+
+/* ---------- 4. landscape phones: reclaim vertical space ---------- */
+@media (max-width: 1024px) and (max-height: 480px) and (orientation: landscape) {
+  .top { position: static; }
+  .flowbar { display: none; }
+}

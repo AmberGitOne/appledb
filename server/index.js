@@ -60,7 +60,19 @@ app.use('/api', (req, res) => {
 });
 
 // ---- browser app ------------------------------------------------------
-app.use(express.static(WEB_DIR, { extensions: ['html'] }));
+// In development the browser's heuristic caching happily serves a stale
+// app.css or mobile.css after an edit, which looks like the change simply
+// did not work. Revalidate every time locally; cache normally in production.
+const IS_DEV = process.env.NODE_ENV !== 'production';
+app.use(express.static(WEB_DIR, {
+  extensions: ['html'],
+  etag: true,
+  lastModified: true,
+  maxAge: IS_DEV ? 0 : '1h',
+  setHeaders(res) {
+    if (IS_DEV) res.setHeader('Cache-Control', 'no-cache');
+  },
+}));
 app.get('*', (req, res) => res.sendFile(path.join(WEB_DIR, 'index.html')));
 
 // ---- errors -----------------------------------------------------------
