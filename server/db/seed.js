@@ -109,7 +109,8 @@ const USERS = [
   ['usr-maria', 'maria@appleglobalcare.com', 'Maria L.',  'role-manager', 'Sales',    'Desk manager',        'Grade 6'],
 ];
 
-const DEFAULT_PASSWORD = 'Welcome@123';
+// One source of truth, shared with the sign-in page's account picker.
+const { DEMO_PASSWORD: DEFAULT_PASSWORD } = require('../lib/demo');
 
 // ---------------------------------------------------------------------
 

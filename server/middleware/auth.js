@@ -68,7 +68,7 @@ function readToken(req) {
  * endpoint sits behind the same middleware, so you would need a token in
  * order to obtain a token. Paths are relative to the /api mount point.
  */
-const PUBLIC_PATHS = new Set(['/auth/login', '/health']);
+const PUBLIC_PATHS = new Set(['/auth/login', '/auth/accounts', '/health']);
 
 /**
  * Populates req.user when a valid token is present. Rejects only when

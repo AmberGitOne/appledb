@@ -277,6 +277,7 @@ GET /api/reports/sourcing/:rfqId         the sourcing spread for one RFQ
 POST /api/auth/login        { email, password } -> JWT
 POST /api/auth/logout
 GET  /api/auth/me
+GET  /api/auth/accounts     the sign-in page's picker (demo builds only)
 GET  /api/auth/users
 GET  /api/auth/roles
 GET  /api/audit?entity=&entityId=&userId=&page=&limit=
@@ -286,6 +287,32 @@ GET  /api/health
 ---
 
 ## Accounts
+
+### The sign-in page
+
+Open `/login` at any time, or sign out from the button beside your name in
+the top bar. With `REQUIRE_AUTH=true` it is also what you get at the root
+URL until you have a token.
+
+In a demo build it lists the seeded accounts. Picking one signs in and drops
+you on that person's desk: Dr. Sara lands on Pharmacy, Yusuf on Sourcing,
+Maria on Sales. The top bar then shows the account you signed in as, not the
+prototype's placeholder name for that desk.
+
+The picker is only ever a shortcut that fills the form in - `POST
+/api/auth/login` still checks the bcrypt hash, and it is the only way in.
+It is served by `GET /api/auth/accounts`, which is public (you need it
+before you have a token) and therefore discloses who exists. That is why it
+answers with nothing at all unless `DEMO_LOGIN` is on, which it is not
+under `NODE_ENV=production`, and which `render.yaml` also sets to
+`false` outright. Without it the page is an ordinary email and password
+form.
+
+`web/login.js` and `web/login.css` are hand-maintained, like
+`web/api.js` and the `mobile.*` pair - the build links them but never
+generates them.
+
+### The seeded users
 
 Six users are seeded across six roles (Admin, Manager, Agent, Pharmacist,
 QA officer, Viewer), with 60 permissions mapped across them.
@@ -326,9 +353,13 @@ NODE_ENV=development
 DB_FILE=./data/crm.db
 JWT_SECRET=change-me-in-production-aglc-crm-secret
 TOKEN_TTL=12h
+REQUIRE_AUTH=false
+DEMO_LOGIN=true
 ```
 
-Change `JWT_SECRET` before putting this anywhere real.
+Change `JWT_SECRET` before putting this anywhere real, and change the seeded
+passwords too - `DEMO_LOGIN=true` publishes the shared one on the sign-in
+page, so keep it off anywhere the URL is not just yours.
 
 ---
 

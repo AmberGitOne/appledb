@@ -97,12 +97,29 @@
   // boot
   // -------------------------------------------------------------------
 
+  /**
+   * Ask the server who we are, and let the sign-in page relabel the top bar.
+   *
+   * Only when auth is enforced. With REQUIRE_AUTH off the server answers
+   * with its admin fallback identity, which nobody actually signed in as -
+   * adopting it would overwrite the prototype's desk persona for every
+   * local run. Cosmetic either way, so failures are ignored.
+   */
+  function syncIdentity() {
+    request('GET', '/auth/me').then(function (res) {
+      if (res && res.requireAuth && res.user && window.CRMLogin) {
+        window.CRMLogin.adopt(res.user);
+      }
+    }).catch(function () {});
+  }
+
   function bootstrap() {
     return request('GET', '/state').then(function (res) {
       state = res.data;
       booted = true;
       bootError = null;
       flushQueue();
+      syncIdentity();
       return state;
     }).catch(function (err) {
       // 401 means the server has REQUIRE_AUTH on and we have no valid token.
@@ -120,80 +137,16 @@
   }
 
   // -------------------------------------------------------------------
-  // sign-in overlay - only ever shown when the server demands a token
+  // sign-in - the page itself lives in web/login.js
   // -------------------------------------------------------------------
 
-  function showLogin() {
-    return new Promise(function (resolve) {
-      var wrap = document.createElement('div');
-      wrap.id = 'crm-login';
-      wrap.style.cssText = [
-        'position:fixed', 'inset:0', 'z-index:10000', 'display:flex',
-        'align-items:center', 'justify-content:center', 'padding:24px',
-        'background:#14338f',
-        'font:400 14px/1.5 Inter,system-ui,-apple-system,sans-serif'
-      ].join(';');
-
-      wrap.innerHTML =
-        '<form id="crm-login-form" autocomplete="on" style="background:#fff;border-radius:14px;' +
-        'width:380px;max-width:100%;padding:30px 32px;box-shadow:0 24px 60px -12px rgba(5,12,40,.5)">' +
-          '<div style="font-size:17px;font-weight:700;color:#0f1b2a;margin-bottom:4px">' +
-            'Apple Globalcare</div>' +
-          '<div style="font-size:13px;color:#6b7a90;margin-bottom:22px">Sign in to continue</div>' +
-
-          '<label for="crm-email" style="display:block;font-size:12px;font-weight:600;' +
-            'color:#55637a;margin-bottom:5px">Email</label>' +
-          '<input id="crm-email" name="username" type="email" required autocomplete="username" ' +
-            'style="width:100%;box-sizing:border-box;padding:9px 11px;border:1px solid #d4dbe6;' +
-            'border-radius:8px;font:inherit;font-size:13.5px;margin-bottom:14px;outline:0">' +
-
-          '<label for="crm-pass" style="display:block;font-size:12px;font-weight:600;' +
-            'color:#55637a;margin-bottom:5px">Password</label>' +
-          '<input id="crm-pass" name="password" type="password" required autocomplete="current-password" ' +
-            'style="width:100%;box-sizing:border-box;padding:9px 11px;border:1px solid #d4dbe6;' +
-            'border-radius:8px;font:inherit;font-size:13.5px;margin-bottom:6px;outline:0">' +
-
-          '<div id="crm-login-err" style="min-height:17px;font-size:12px;color:#b42318;' +
-            'margin-bottom:10px"></div>' +
-
-          '<button id="crm-login-go" type="submit" style="width:100%;padding:10px;border:0;' +
-            'border-radius:8px;background:#1d4ed8;color:#fff;font:inherit;font-size:14px;' +
-            'font-weight:600;cursor:pointer">Sign in</button>' +
-        '</form>';
-
-      document.body.appendChild(wrap);
-
-      var form = wrap.querySelector('#crm-login-form');
-      var email = wrap.querySelector('#crm-email');
-      var pass = wrap.querySelector('#crm-pass');
-      var errBox = wrap.querySelector('#crm-login-err');
-      var button = wrap.querySelector('#crm-login-go');
-
-      email.focus();
-
-      form.addEventListener('submit', function (e) {
-        e.preventDefault();
-        errBox.textContent = '';
-        button.disabled = true;
-        button.textContent = 'Signing in…';
-
-        request('POST', '/auth/login', {
-          email: email.value.trim(),
-          password: pass.value
-        }).then(function (res) {
-          try { window.localStorage.setItem('aglc-token', res.token); } catch (e) {}
-          wrap.remove();
-          resolve(res.user);
-        }).catch(function (err) {
-          button.disabled = false;
-          button.textContent = 'Sign in';
-          errBox.textContent = err.status === 401
-            ? 'Email or password is incorrect.'
-            : err.message;
-          pass.select();
-        });
-      });
-    });
+  function showLogin(reason) {
+    if (window.CRMLogin) return window.CRMLogin.show({ reason: reason });
+    // login.js is linked by the build and checked for at build time, so this
+    // only happens if web/ has been edited by hand. Say so rather than hang.
+    var err = new Error('The sign-in page (login.js) failed to load.');
+    showFatal(err);
+    return Promise.reject(err);
   }
 
   function showFatal(err) {
@@ -256,7 +209,7 @@
       if (err.status === 401) {
         try { window.localStorage.removeItem('aglc-token'); } catch (e) {}
         status('Session expired — sign in again', 'error');
-        showLogin().then(function () { doSave(); });
+        showLogin('expired').then(function () { doSave(); });
         return;
       }
 
@@ -347,6 +300,19 @@
     post: function (path, body) { return request('POST', path, body); },
     patch: function (path, body) { return request('PATCH', path, body); },
     del: function (path) { return request('DELETE', path); },
+
+    /** The signed-in user, as the server described them, or null. */
+    user: function () {
+      return window.CRMLogin ? window.CRMLogin.user() : null;
+    },
+
+    /** Drop the token and go to /login so another account can be used. */
+    logout: function () {
+      if (window.CRMLogin) window.CRMLogin.signOut();
+    },
+
+    /** Show the sign-in page on demand. Resolves with the new user. */
+    login: function () { return showLogin('switch'); },
 
     status: status,
     lastError: function () { return lastError; }

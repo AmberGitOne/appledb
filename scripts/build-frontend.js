@@ -148,8 +148,12 @@ const indexHtml =
   // mobile.css is hand-maintained and must load after app.css so its
   // overrides win on narrow screens without needing !important
   '<link rel="stylesheet" href="mobile.css">' +
+  '<link rel="stylesheet" href="login.css">' +
   between +
-  // api.js first: it starts the fetch and defines window.CRM
+  // login.js before api.js: api.js can call CRMLogin.show() as soon as its
+  // first request comes back 401, so the page must already be defined
+  '<script src="login.js"></script>\n' +
+  // api.js next: it starts the fetch and defines window.CRM
   '<script src="api.js"></script>\n' +
   '<script src="app.js"></script>\n' +
   '<script src="boot.js"></script>\n' +
@@ -179,7 +183,7 @@ for (const f of ['index.html', 'app.css', 'app.js', 'boot.js']) {
 // Hand-maintained files this build only links to - warn loudly if one has
 // gone missing, otherwise the page silently loses its mobile layout.
 console.log('\n  hand-maintained (not generated):');
-for (const f of ['api.js', 'mobile.css', 'mobile.js']) {
+for (const f of ['api.js', 'mobile.css', 'mobile.js', 'login.css', 'login.js']) {
   if (fs.existsSync(path.join(WEB, f))) {
     console.log(`    ${f.padEnd(12)} ${size(f)}`);
   } else {

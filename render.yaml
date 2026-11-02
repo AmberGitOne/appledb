@@ -36,6 +36,12 @@ services:
         value: /var/data/crm.db
       - key: REQUIRE_AUTH
         value: "true"      # the app is reachable from the internet here
+
+      # The sign-in page offers a one-click account picker, which means
+      # publishing the seeded accounts' shared password. Never on a public
+      # URL. NODE_ENV=production already turns it off; this says so outright.
+      - key: DEMO_LOGIN
+        value: "false"
       - key: JWT_SECRET
         generateValue: true
       - key: TOKEN_TTL

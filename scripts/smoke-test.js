@@ -215,6 +215,27 @@ async function main() {
   check('roles endpoint lists permissions',
     roles.status === 200 && roles.body.data.length === 6);
 
+  // ---- the sign-in page's account picker --------------------------------
+  const accounts = await api('GET', '/api/auth/accounts');
+  check('accounts endpoint answers without a token', accounts.status === 200);
+  check('accounts are listed in a demo build',
+    accounts.body.demo === true && accounts.body.data.length === 6);
+  check('every listed account carries a role and an avatar',
+    accounts.body.data.every((a) => a.email && a.roleName && a.avatar));
+  check('no password hash is ever sent to the browser',
+    !JSON.stringify(accounts.body).includes('$2'));
+
+  // The picker fills the form in; /login still does the authenticating. If
+  // an account it offers cannot actually sign in, the page is lying.
+  let everyAccountCanSignIn = true;
+  for (const acct of accounts.body.data) {
+    const res = await api('POST', '/api/auth/login', {
+      email: acct.email, password: accounts.body.password,
+    });
+    if (res.status !== 200 || !res.body.token) everyAccountCanSignIn = false;
+  }
+  check('every offered account can actually sign in', everyAccountCanSignIn);
+
   // ---- restore ----------------------------------------------------------
   console.log('\n-- restoring the seeded dataset --');
   const reset = await api('POST', '/api/state/reset');

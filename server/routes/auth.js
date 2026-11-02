@@ -7,6 +7,7 @@ const { db } = require('../db');
 const audit = require('../lib/audit');
 const { wrap, badRequest, unauthorized } = require('../lib/http');
 const { sign, hydrate, REQUIRE_AUTH } = require('../middleware/auth');
+const { DEMO_PASSWORD, DEMO_LOGIN } = require('../lib/demo');
 
 const router = express.Router();
 
@@ -39,6 +40,34 @@ router.post('/login', wrap((req, res) => {
   });
 
   res.json({ token, user: publicUser(user) });
+}));
+
+/**
+ * GET /api/auth/accounts - the sign-in page's account picker.
+ *
+ * Public, necessarily: it is read before anyone has a token. That means it
+ * discloses who exists, so it answers with nothing at all unless this is a
+ * demo build. `password` is the shared fixture, sent so the picker can fill
+ * the form in; it is never used server-side - /login is still the only way
+ * in, and it still checks the hash.
+ */
+router.get('/accounts', wrap((req, res) => {
+  if (!DEMO_LOGIN) {
+    return res.json({ demo: false, requireAuth: REQUIRE_AUTH, data: [] });
+  }
+  const rows = db.prepare(`
+    SELECT u.id, u.email, u.name, u.desk, u.job_title AS jobTitle, u.avatar,
+           u.role_id AS roleId, r.name AS roleName, r.description AS roleDescription
+    FROM users u JOIN roles r ON r.id = u.role_id
+    WHERE u.active = 1
+    ORDER BY r.id, u.name
+  `).all();
+  res.json({
+    demo: true,
+    requireAuth: REQUIRE_AUTH,
+    password: DEMO_PASSWORD,
+    data: rows,
+  });
 }));
 
 router.post('/logout', wrap((req, res) => {

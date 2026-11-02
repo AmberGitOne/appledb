@@ -1,0 +1,380 @@
+/* ===================================================================
+   Sign-in page.
+
+   Everything is namespaced under #crm-login so app.css cannot reach into
+   it and it cannot reach back out. Built by web/login.js, which is
+   hand-maintained - scripts/build-frontend.js only links these two files,
+   it never generates them.
+   =================================================================== */
+
+#crm-login {
+  position: fixed;
+  inset: 0;
+  z-index: 10000;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  background: #0d255f;
+  color: #0f1b2a;
+  font: 400 14px/1.5 Inter, system-ui, -apple-system, "Segoe UI", sans-serif;
+  overflow: hidden;
+}
+
+/* ---------- left: the brand panel ---------- */
+
+#crm-login .lg-brand {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 18px;
+  padding: 48px 52px;
+  color: #e8eefc;
+  background:
+    radial-gradient(1100px 520px at 12% 8%, #1e4bbd 0%, rgba(30, 75, 189, 0) 62%),
+    linear-gradient(160deg, #163a8f 0%, #0d255f 100%);
+  background-color: #0d255f;
+  overflow: hidden;
+}
+
+#crm-login .lg-mark {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: .2px;
+}
+
+#crm-login .lg-mark i {
+  width: 32px;
+  height: 32px;
+  border-radius: 9px;
+  display: grid;
+  place-items: center;
+  background: #fff;
+  color: #14338f;
+  font-style: normal;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+#crm-login .lg-brand h2 {
+  margin: 0;
+  font-size: 30px;
+  line-height: 1.18;
+  font-weight: 600;
+  letter-spacing: -.4px;
+  max-width: 16em;
+}
+
+#crm-login .lg-brand p {
+  margin: 0;
+  max-width: 34em;
+  color: #aebfe6;
+  font-size: 13.5px;
+}
+
+#crm-login .lg-facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 26px;
+  margin-top: 6px;
+  padding-top: 20px;
+  border-top: 1px solid rgba(174, 191, 230, .22);
+}
+
+#crm-login .lg-facts div { min-width: 92px; }
+#crm-login .lg-facts b {
+  display: block;
+  font-size: 19px;
+  font-weight: 600;
+  color: #fff;
+}
+#crm-login .lg-facts span {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: .6px;
+  color: #93a8d8;
+}
+
+/* ---------- right: the card ---------- */
+
+#crm-login .lg-pane {
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  /* 28px rather than 40: the card plus six accounts comes to ~870px, and a
+     1280x860 laptop viewport should not have to scroll for the last one. */
+  padding: 22px 32px;
+  background: #f5f7fb;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+#crm-login .lg-card {
+  width: 100%;
+  max-width: 404px;
+  margin: auto;
+  background: #fff;
+  border: 1px solid #e4e9f2;
+  border-radius: 14px;
+  padding: 22px 24px 20px;
+  box-shadow: 0 18px 44px -20px rgba(10, 25, 70, .34);
+}
+
+#crm-login h1 {
+  margin: 0 0 3px;
+  font-size: 19px;
+  font-weight: 650;
+  letter-spacing: -.2px;
+}
+
+#crm-login .lg-sub {
+  margin: 0 0 15px;
+  font-size: 13px;
+  color: #6b7a90;
+}
+
+/* ---------- the account picker ---------- */
+
+#crm-login .lg-legend {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin: 0 0 9px;
+  font-size: 11px;
+  font-weight: 650;
+  text-transform: uppercase;
+  letter-spacing: .7px;
+  color: #8b98ab;
+}
+#crm-login .lg-legend::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: #e8ecf3;
+}
+
+#crm-login .lg-users {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 15px;
+}
+
+#crm-login .lg-user {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  width: 100%;
+  padding: 8px 11px;
+  border: 1px solid #e4e9f2;
+  border-radius: 10px;
+  background: #fff;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color .14s, background .14s, box-shadow .14s;
+  -webkit-tap-highlight-color: transparent;
+}
+
+#crm-login .lg-user:hover { border-color: #b9c8e6; background: #f8fafe; }
+#crm-login .lg-user:focus-visible {
+  outline: 0;
+  border-color: #1d4ed8;
+  box-shadow: 0 0 0 3px rgba(29, 78, 216, .18);
+}
+#crm-login .lg-user[aria-busy="true"] { border-color: #1d4ed8; background: #f2f6ff; }
+#crm-login .lg-user:disabled { cursor: default; opacity: .55; }
+#crm-login .lg-user[aria-busy="true"]:disabled { opacity: 1; }
+
+#crm-login .lg-av {
+  flex: none;
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  font-size: 12px;
+  font-weight: 650;
+  color: #fff;
+  letter-spacing: .3px;
+}
+
+#crm-login .lg-who { min-width: 0; flex: 1; }
+/* These are spans, and overflow/text-overflow do nothing on an inline box -
+   without display:block a long name pushes the row wide instead of
+   ellipsising. "Responsible pharmacist · Pharmacy" already does. */
+#crm-login .lg-nm,
+#crm-login .lg-jt { display: block; }
+#crm-login .lg-nm {
+  font-size: 13.5px;
+  font-weight: 600;
+  color: #15223a;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+#crm-login .lg-jt {
+  font-size: 11.5px;
+  color: #7d8a9e;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+#crm-login .lg-chip {
+  flex: none;
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: #eef2f8;
+  color: #55637a;
+  font-size: 10.5px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+/* ---------- the form ---------- */
+
+#crm-login label {
+  display: block;
+  margin-bottom: 5px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #55637a;
+}
+
+#crm-login input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 10px 11px;
+  margin-bottom: 13px;
+  border: 1px solid #d4dbe6;
+  border-radius: 9px;
+  background: #fff;
+  font: inherit;
+  font-size: 14px;
+  color: #0f1b2a;
+  outline: 0;
+  transition: border-color .14s, box-shadow .14s;
+}
+#crm-login input:focus {
+  border-color: #1d4ed8;
+  box-shadow: 0 0 0 3px rgba(29, 78, 216, .15);
+}
+
+#crm-login .lg-err {
+  min-height: 18px;
+  margin-bottom: 9px;
+  font-size: 12px;
+  color: #b42318;
+}
+
+#crm-login .lg-go {
+  width: 100%;
+  padding: 11px;
+  border: 0;
+  border-radius: 9px;
+  background: #1d4ed8;
+  color: #fff;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background .14s;
+}
+#crm-login .lg-go:hover { background: #1a44bb; }
+#crm-login .lg-go:disabled { background: #94a7d9; cursor: default; }
+
+#crm-login .lg-note {
+  margin: 14px 0 0;
+  font-size: 11.5px;
+  line-height: 1.55;
+  color: #8b98ab;
+}
+#crm-login .lg-note code {
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: #f1f4f9;
+  font-size: 11px;
+  color: #55637a;
+}
+
+/* A lapsed session is a different message from a first sign-in. */
+#crm-login .lg-flash {
+  margin: 0 0 16px;
+  padding: 9px 11px;
+  border: 1px solid #fbe3b8;
+  border-radius: 9px;
+  background: #fffaef;
+  font-size: 12.5px;
+  color: #8a5a06;
+}
+
+/* ---------- the top-bar sign-out button (injected by login.js) ---------- */
+
+#crm-signout {
+  flex: none;
+  margin-left: 10px;
+  padding: 6px 10px;
+  border: 1px solid #e2e7ee;
+  border-radius: 8px;
+  background: #fff;
+  color: #55637a;
+  font: 500 11.5px/1 Inter, system-ui, sans-serif;
+  cursor: pointer;
+  white-space: nowrap;
+  -webkit-tap-highlight-color: transparent;
+}
+#crm-signout:hover { background: #f4f6fa; color: #15223a; }
+
+/* ---------- narrow screens ---------- */
+
+@media (max-width: 880px) {
+  #crm-login {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr);
+    overflow-y: auto;
+  }
+  /* The panel keeps the product name and drops the rest - on a phone the
+     card is what matters and the copy only pushes it below the fold. */
+  #crm-login .lg-brand {
+    gap: 10px;
+    padding: calc(20px + env(safe-area-inset-top)) 20px 20px;
+    justify-content: flex-start;
+  }
+  #crm-login .lg-brand h2 { font-size: 19px; max-width: none; }
+  #crm-login .lg-brand p,
+  #crm-login .lg-facts { display: none; }
+  #crm-login .lg-pane {
+    padding: 18px 14px calc(26px + env(safe-area-inset-bottom));
+  }
+  #crm-login .lg-card {
+    max-width: 440px;
+    padding: 20px 18px 18px;
+    box-shadow: none;
+  }
+  /* iOS zooms the page when a focused field is under 16px. */
+  #crm-login input { font-size: 16px; }
+}
+
+/* The role is the reason this list exists, so the chip survives even at
+   320px - it shrinks and the subtitle gives up width instead. 375px is the
+   commonest phone there is; hiding it there would be hiding the point. */
+@media (max-width: 400px) {
+  #crm-login .lg-user { padding: 8px 9px; gap: 9px; }
+  #crm-login .lg-av { width: 30px; height: 30px; font-size: 11px; }
+  #crm-login .lg-chip { padding: 3px 6px; font-size: 10px; }
+  #crm-login .lg-nm { font-size: 13px; }
+  #crm-login .lg-jt { font-size: 11px; }
+}
+
+/* The sign-out button loses its label on a phone - the icon carries it. */
+@media (max-width: 560px) {
+  #crm-signout { margin-left: 6px; padding: 6px 8px; }
+  #crm-signout span { display: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #crm-login * { transition: none !important; }
+}
