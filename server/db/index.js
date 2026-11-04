@@ -19,7 +19,6 @@ const path = require('path');
 const fs = require('fs');
 const { pathToFileURL } = require('url');
 const { AsyncLocalStorage } = require('async_hooks');
-const { createClient } = require('@libsql/client');
 
 require('dotenv').config({ path: path.join(__dirname, '..', '..', '.env') });
 
@@ -53,6 +52,20 @@ if (SERVERLESS && !IS_REMOTE) {
 }
 
 if (!IS_REMOTE) fs.mkdirSync(path.dirname(DB_FILE), { recursive: true });
+
+/**
+ * Two entry points, deliberately.
+ *
+ * The default export of @libsql/client can open a local file, which it does
+ * through a platform-specific native binary of about 8 MB. The /web entry is
+ * plain fetch over the network and carries none of that - which is what a
+ * serverless bundle wants, and it removes any chance of the .node file being
+ * left out of the deployment. Remote connections never needed the native
+ * code anyway.
+ */
+const { createClient } = IS_REMOTE
+  ? require('@libsql/client/web')
+  : require('@libsql/client');
 
 const client = createClient(
   IS_REMOTE
