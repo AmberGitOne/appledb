@@ -110,7 +110,7 @@ const USERS = [
 ];
 
 // One source of truth, shared with the sign-in page's account picker.
-const { DEMO_PASSWORD: DEFAULT_PASSWORD } = require('../lib/demo');
+const { DEMO_PASSWORD: DEFAULT_PASSWORD, DEMO_LOGIN } = require('../lib/demo');
 
 // ---------------------------------------------------------------------
 
@@ -693,7 +693,16 @@ async function seed() {
   console.log(`  total ${total} rows across ${order.length} tables`);
   console.log(`\n  sign in with any of:`);
   for (const [, email, name] of USERS) console.log(`    ${email.padEnd(32)} ${name}`);
-  console.log(`  password: ${DEFAULT_PASSWORD}`);
+
+  // Only on a demo build. Under NODE_ENV=production the password is the
+  // operator's own, and this runs on a host whose stdout is a log the
+  // deployment keeps - there is no reason to write a live credential
+  // into it, least of all one shared by every account.
+  if (DEMO_LOGIN) {
+    console.log(`  password: ${DEFAULT_PASSWORD}`);
+  } else {
+    console.log('  password: the DEMO_PASSWORD you set in the environment');
+  }
 }
 
 if (require.main === module) {

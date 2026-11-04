@@ -79,6 +79,35 @@ async function main() {
  */
 const BOOTSTRAP_LOCK = 724301;
 
+/**
+ * Round trips in a migrate + seed, measured: 150.8s of first boot over a
+ * 205ms link is ~735 sequential statements. It is latency, not work - the
+ * same boot takes about two seconds against a database in the same region.
+ */
+const BOOTSTRAP_ROUND_TRIPS = 735;
+
+/** How long the first request may reasonably spend. Under maxDuration. */
+const BOOTSTRAP_BUDGET_MS = Number(process.env.BOOTSTRAP_BUDGET_MS) || 20000;
+
+/**
+ * Is the database close enough to prepare inside one request?
+ *
+ * A serverless function is killed at maxDuration. Seeding runs in a
+ * transaction, so a kill rolls the whole thing back, and the next request
+ * starts over and is killed at the same point - an invisible loop that
+ * never converges and never explains itself. Whether that happens is
+ * decided almost entirely by the round trip to the database, so measure it
+ * and refuse up front rather than discovering it 60 seconds in.
+ */
+async function bootstrapFeasible() {
+  const started = Date.now();
+  await db.prepare('SELECT 1 AS n').get();
+  const rtt = Math.max(Date.now() - started, 1);
+  const estimateMs = rtt * BOOTSTRAP_ROUND_TRIPS;
+  return { rtt, estimateMs, ok: estimateMs <= BOOTSTRAP_BUDGET_MS };
+}
+
+
 async function ensureDatabase() {
   if (await hasRows('users')) return false;
 
@@ -86,8 +115,28 @@ async function ensureDatabase() {
     // Whoever held the lock first may have just done all of this.
     if (await hasRows('users')) return false;
 
-    console.log('  first boot: preparing the database');
     assertSeedPasswordIsSafe();
+
+    const { rtt, estimateMs, ok } = await bootstrapFeasible();
+    if (!ok) {
+      throw new Error(
+        `This database is ${rtt}ms away, so preparing it would take about ` +
+        `${Math.round(estimateMs / 1000)}s - longer than a serverless ` +
+        `function is allowed to run, and a request killed partway rolls the ` +
+        `whole thing back and retries forever. Either host the database in ` +
+        `the same region as the function, or load the schema once yourself ` +
+        `against the direct (non-pooled) connection string:
+
+` +
+        `    npm run setup
+
+` +
+        `Raise BOOTSTRAP_BUDGET_MS past ${BOOTSTRAP_BUDGET_MS} only if ` +
+        `maxDuration in vercel.json allows it.`
+      );
+    }
+
+    console.log(`  first boot: preparing the database (${rtt}ms away)`);
     await require('./migrate').run();
     const { seed } = require('./seed');
     await db.transaction(seed)();

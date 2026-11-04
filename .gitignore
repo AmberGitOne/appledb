@@ -34,3 +34,4 @@ data/pgdata/
 # Commit .claude/skills/ instead if you would rather a fresh clone have them
 # without running anything.
 .claude/skills/
+.neon

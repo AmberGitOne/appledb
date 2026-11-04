@@ -62,6 +62,25 @@ it to the same Express app the server uses. There is no `listen()` there;
 the app is invoked per request, and `ready()` resolves the connection once
 per instance.
 
+### Put the database in the function's region
+
+This matters more than it looks. The first request runs a migrate and a
+seed, which is about 735 sequential statements - almost no work, but one
+round trip each. Co-located, that is ~2 seconds. Measured from India
+against `aws-us-east-1`, with a 205ms round trip, the same boot took
+**150 seconds**.
+
+A serverless function is killed at `maxDuration`, and seeding runs in a
+transaction, so a kill rolls it back and the next request starts over and
+is killed at the same point - a loop that never converges. So the boot
+measures the round trip first and refuses outright if the arithmetic does
+not fit in `BOOTSTRAP_BUDGET_MS` (20s by default, under the 60s
+`maxDuration` in `vercel.json`), telling you to co-locate or to load the
+schema yourself. It does not start work it cannot finish.
+
+Vercel functions default to `iad1`, which is `us-east-1`. Match it, or set
+both to whichever region you prefer.
+
 ### The first request
 
 Vercel runs a function, not a start command, so there is nowhere to put a
