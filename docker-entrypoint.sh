@@ -3,11 +3,9 @@
 #
 # bootstrap.js applies the schema and seeds only when the database has no
 # users, so this is safe to run on every container start: a redeploy never
-# wipes data sitting on the mounted volume.
+# wipes data that is already there.
 
 set -e
-
-mkdir -p "$(dirname "${DB_FILE:-/app/data/crm.db}")"
 
 node server/db/bootstrap.js
 

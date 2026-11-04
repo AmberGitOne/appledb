@@ -23,33 +23,19 @@ async function ensureMigrationsTable() {
     CREATE TABLE IF NOT EXISTS schema_migrations (
       name       TEXT PRIMARY KEY,
       checksum   TEXT NOT NULL,
-      applied_at TEXT NOT NULL DEFAULT (datetime('now'))
+      -- now_text() comes from schema.sql, which has not run yet the first
+      -- time this table is created, so spell the expression out here.
+      applied_at TEXT NOT NULL
+                 DEFAULT to_char(now() AT TIME ZONE 'utc', 'YYYY-MM-DD HH24:MI:SS')
     );
   `);
 }
 
 async function dropEverything() {
-  await db.pragma('foreign_keys = OFF');
-
-  const drop = async (type, keyword) => {
-    const rows = await db
-      .prepare(
-        `SELECT name FROM sqlite_master
-         WHERE type = ? AND name NOT LIKE 'sqlite_%'`
-      )
-      .all(type);
-    for (const { name } of rows) {
-      await db.exec(`DROP ${keyword} IF EXISTS "${name}"`);
-    }
-  };
-
-  // Order matters: triggers and views reference tables.
-  await drop('trigger', 'TRIGGER');
-  await drop('view', 'VIEW');
-  await drop('index', 'INDEX');
-  await drop('table', 'TABLE');
-
-  await db.pragma('foreign_keys = ON');
+  // Under SQLite this walked sqlite_master dropping objects in dependency
+  // order. Postgres can drop the whole namespace in one statement, which
+  // also catches the functions and sequences that enumeration would miss.
+  await db.exec('DROP SCHEMA public CASCADE; CREATE SCHEMA public;');
   console.log('  dropped all existing objects');
 }
 
@@ -95,16 +81,20 @@ async function run() {
   // schema is never recorded as done - the next run simply tries again.
   await db.exec(sql);
   await db.prepare(
-    'INSERT OR REPLACE INTO schema_migrations (name, checksum) VALUES (?, ?)'
+    `INSERT INTO schema_migrations (name, checksum) VALUES (?, ?)
+     ON CONFLICT (name) DO UPDATE SET checksum = excluded.checksum,
+                                      applied_at = now_text()`
   ).run('schema.sql', checksum);
 
   const counts = await db
     .prepare(
       `SELECT
-         (SELECT COUNT(*) FROM sqlite_master WHERE type='table'  AND name NOT LIKE 'sqlite_%') AS tables,
-         (SELECT COUNT(*) FROM sqlite_master WHERE type='index'  AND name NOT LIKE 'sqlite_%') AS indexes,
-         (SELECT COUNT(*) FROM sqlite_master WHERE type='view')   AS views,
-         (SELECT COUNT(*) FROM sqlite_master WHERE type='trigger') AS triggers`
+         (SELECT COUNT(*) FROM information_schema.tables
+            WHERE table_schema = 'public' AND table_type = 'BASE TABLE') AS tables,
+         (SELECT COUNT(*) FROM pg_indexes WHERE schemaname = 'public')    AS indexes,
+         (SELECT COUNT(*) FROM information_schema.views
+            WHERE table_schema = 'public')                                AS views,
+         (SELECT COUNT(*) FROM pg_trigger WHERE NOT tgisinternal)         AS triggers`
     )
     .get();
 

@@ -7,7 +7,7 @@ and provisions the service, its persistent disk and its environment in one
 step. Note that Vercel cannot host this as built — DEPLOY.md explains why.
 
 A working full-stack build of the Apple Globalcare CRM prototype: the original
-single-file HTML UI, now backed by an Express REST API and a real SQLite
+single-file HTML UI, now backed by an Express REST API and a real PostgreSQL
 database with a normalised relational schema.
 
 The prototype kept everything in one `localStorage` key. This project replaces
@@ -37,16 +37,22 @@ npm start
 
 Then open **http://localhost:4000**.
 
-No C++ toolchain is needed. `@libsql/client` ships prebuilt binaries, and the
-committed `.npmrc` sets `ignore-scripts=true` so npm uses them instead of
-trying to rebuild from source — which would otherwise fail on any machine
-without Visual Studio, Xcode or build-essential. Install takes a couple of
-seconds.
+No C++ toolchain is needed: `pg` is pure JavaScript, and the committed
+`.npmrc` sets `ignore-scripts=true` so nothing tries to build from source.
+Install takes a couple of seconds.
 
-The same client talks to a local SQLite file or to a hosted Turso database,
-so the code path is identical on a laptop, on a server with a disk, and on a
-serverless host. Set `TURSO_DATABASE_URL` to switch; leave it unset for the
-local file.
+The database is **PostgreSQL**, set by `DATABASE_URL` (or `POSTGRES_URL`,
+which Vercel provides). There is no local-file mode — a serverless host has
+no writable disk, so the SQLite this started on could not follow it there.
+
+If you do not have a Postgres to point at, the repo brings its own:
+
+```bash
+npm run db:local     # leave running; prints the DATABASE_URL to use
+```
+
+That starts a real Postgres under `data/pgdata` with no account, no
+container and no network. It is a devDependency, so it is never deployed.
 
 Optionally copy `.env.example` to `.env` to change the port, database path or
 JWT secret. The app runs on sensible defaults without it.
@@ -83,7 +89,7 @@ server/
   index.js              Express app, static hosting, error handling
   db/
     schema.sql          the entire relational model
-    index.js            libSQL client: local file or Turso, async statements
+    index.js            pg pool, ? -> $n, transactions via AsyncLocalStorage
     migrate.js          migration runner, checksum-tracked
     seed.js             loads data/seed.json into the tables
   lib/
@@ -109,10 +115,11 @@ web/
   mobile.js             the navigation drawer
 scripts/
   build-frontend.js     regenerates web/ from the prototype HTML
-  smoke-test.js         45-assertion end-to-end test
+  dev-postgres.js       a local Postgres for development (npm run db:local)
+  smoke-test.js         51-assertion end-to-end test
 data/
   seed.json             demo data extracted from the prototype
-  crm.db                the SQLite database (created by npm run setup)
+  pgdata/               local Postgres cluster, if you use npm run db:local
 ```
 
 ---
@@ -362,7 +369,7 @@ roles with `403`.
 ```
 PORT=4000
 NODE_ENV=development
-DB_FILE=./data/crm.db
+DATABASE_URL=postgres://crm:crm@127.0.0.1:5433/crm
 JWT_SECRET=change-me-in-production-aglc-crm-secret
 TOKEN_TTL=12h
 REQUIRE_AUTH=false

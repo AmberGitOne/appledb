@@ -1,77 +1,70 @@
 'use strict';
 /**
- * Database connection.
+ * Database connection (PostgreSQL).
  *
- * One libSQL client for the whole process. libSQL speaks SQLite's dialect
- * either against a local file or against a Turso database over the network,
- * so the same code runs on a laptop, on Render's persistent disk, and on a
- * serverless host that has no writable filesystem at all.
+ * One pg Pool for the process. Postgres is the only backend now: a
+ * serverless host has no writable disk, so the file-based SQLite this app
+ * started on could not follow it there.
  *
- *   TURSO_DATABASE_URL set  ->  libsql://... , needs TURSO_AUTH_TOKEN
- *   otherwise               ->  the local file named by DB_FILE
+ *   POSTGRES_URL or DATABASE_URL   postgres://user:pass@host/db
  *
- * Everything here is asynchronous, because the network client is. The shape
- * of the API is deliberately the one better-sqlite3 had - prepare(sql) then
- * .get/.all/.run - so the call sites read the same; they just await now.
+ * The API is deliberately the shape the call sites already use -
+ * prepare(sql) then .get/.all/.run - so the 200-odd queries did not have to
+ * be rewritten a second time. Two translations make that possible: `?`
+ * placeholders become `$1, $2, ...`, and bigint columns come back as
+ * numbers rather than strings.
  */
 
 const path = require('path');
-const fs = require('fs');
-const { pathToFileURL } = require('url');
 const { AsyncLocalStorage } = require('async_hooks');
+const { Pool, types } = require('pg');
 
 require('dotenv').config({ path: path.join(__dirname, '..', '..', '.env') });
 
-const ROOT = path.join(__dirname, '..', '..');
-
-const TURSO_URL = (process.env.TURSO_DATABASE_URL || '').trim();
-const IS_REMOTE = TURSO_URL !== '';
-
-/** The local file, or null when we are talking to Turso. */
-const DB_FILE = IS_REMOTE
-  ? null
-  : path.resolve(ROOT, process.env.DB_FILE || './data/crm.db');
-
-/** Something short to print in logs and /api/health. */
-const DB_DESCRIPTION = IS_REMOTE
-  ? TURSO_URL.replace(/^libsql:\/\//, '').split('?')[0]
-  : path.basename(DB_FILE);
-
 /**
- * A serverless host has a read-only filesystem and keeps nothing between
- * invocations, so a local file is not a database there - it would either
- * fail to open or silently vanish. Say which variable is missing instead.
+ * COUNT() and SUM() are int8/numeric, and node-postgres hands those back as
+ * strings so that values beyond 2^53 survive. Every such number here is a
+ * row count or a small sum, and the app compares and adds them as numbers -
+ * `counts.tickets === 41` would quietly be false against "41".
  */
-const SERVERLESS = !!(process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME);
-if (SERVERLESS && !IS_REMOTE) {
+types.setTypeParser(20, (v) => (v === null ? null : Number(v)));    // int8
+types.setTypeParser(1700, (v) => (v === null ? null : Number(v)));  // numeric
+
+const CONNECTION_URL =
+  (process.env.POSTGRES_URL || process.env.DATABASE_URL || '').trim();
+
+if (!CONNECTION_URL) {
   throw new Error(
-    'TURSO_DATABASE_URL is not set. This host cannot use a local SQLite ' +
-    'file, because its filesystem is read-only and not shared between ' +
-    'invocations. Set TURSO_DATABASE_URL and TURSO_AUTH_TOKEN.'
+    'No database configured. Set POSTGRES_URL (or DATABASE_URL) to a ' +
+    'Postgres connection string. On Vercel this comes from the Postgres ' +
+    'integration; locally, copy it from the project settings into .env.'
   );
 }
 
-if (!IS_REMOTE) fs.mkdirSync(path.dirname(DB_FILE), { recursive: true });
+/** Hosted Postgres wants TLS; a local test server does not have it. */
+const IS_LOCAL = /@(localhost|127\.0\.0\.1|\[::1\])[:/]/.test(CONNECTION_URL);
 
-/**
- * Two entry points, deliberately.
- *
- * The default export of @libsql/client can open a local file, which it does
- * through a platform-specific native binary of about 8 MB. The /web entry is
- * plain fetch over the network and carries none of that - which is what a
- * serverless bundle wants, and it removes any chance of the .node file being
- * left out of the deployment. Remote connections never needed the native
- * code anyway.
- */
-const { createClient } = IS_REMOTE
-  ? require('@libsql/client/web')
-  : require('@libsql/client');
+const pool = new Pool({
+  connectionString: CONNECTION_URL,
+  ssl: IS_LOCAL ? false : { rejectUnauthorized: false },
+  // A serverless instance handles one request at a time and every instance
+  // holds its own pool, so a larger one only exhausts the server's slots.
+  max: process.env.VERCEL ? 1 : 10,
+  idleTimeoutMillis: 10000,
+  connectionTimeoutMillis: 10000,
+});
 
-const client = createClient(
-  IS_REMOTE
-    ? { url: TURSO_URL, authToken: process.env.TURSO_AUTH_TOKEN }
-    : { url: pathToFileURL(DB_FILE).href }
-);
+pool.on('error', (err) => console.error('idle postgres client error:', err.message));
+
+/** Something short to print in logs and /api/health - never the password. */
+const DB_DESCRIPTION = (() => {
+  try {
+    const u = new URL(CONNECTION_URL);
+    return u.host + u.pathname;
+  } catch (_) {
+    return 'postgres';
+  }
+})();
 
 // ---------------------------------------------------------------------
 // transactions
@@ -80,19 +73,17 @@ const client = createClient(
 /**
  * The transaction currently in scope, if any.
  *
- * better-sqlite3 was synchronous, so a transaction was simply "the next few
- * statements". Over a network client each statement has to be sent to the
- * transaction object itself, which would mean threading a handle through
- * every function that writes. AsyncLocalStorage carries it implicitly
- * instead, so the call sites keep using the shared `db`, and concurrent
- * requests cannot pick up each other's transaction the way a plain module
- * variable would allow.
+ * A Postgres transaction belongs to one connection, so every statement
+ * inside it has to go to that same client rather than to the pool.
+ * AsyncLocalStorage carries it implicitly, which is what lets the call
+ * sites keep using the shared `db`; two concurrent saves cannot land in
+ * each other's transaction the way a module-level variable would allow.
  */
 const txStore = new AsyncLocalStorage();
 
-/** The transaction in scope, or the plain client. */
+/** The transaction's client, or the pool. */
 function conn() {
-  return txStore.getStore() || client;
+  return txStore.getStore() || pool;
 }
 
 // ---------------------------------------------------------------------
@@ -100,14 +91,30 @@ function conn() {
 // ---------------------------------------------------------------------
 
 /**
- * libSQL rows are array-like as well as keyed, so they carry a `length` and
- * numeric indices that a plain row never had. Copying to an ordinary object
- * keeps spreads, Object.keys and JSON.stringify behaving the way the rest of
- * the codebase assumes.
+ * `?` -> `$1, $2, ...`
+ *
+ * The queries were written for SQLite. Renumbering all of them by hand
+ * would have been a second sweep over 200 call sites for no behavioural
+ * gain, so the placeholders are translated here. Question marks inside
+ * string literals are left alone: `WHERE note LIKE '%?%'` must not be
+ * turned into a parameter.
  */
-function plain(row) {
-  const out = {};
-  for (const key of Object.keys(row)) out[key] = row[key];
+function toPg(sql) {
+  if (!sql.includes('?')) return sql;
+  let out = '';
+  let n = 0;
+  let quote = null;
+  for (let i = 0; i < sql.length; i++) {
+    const c = sql[i];
+    if (quote) {
+      out += c;
+      if (c === quote) quote = null;
+      continue;
+    }
+    if (c === "'" || c === '"') { quote = c; out += c; continue; }
+    if (c === '?') { out += '$' + ++n; continue; }
+    out += c;
+  }
   return out;
 }
 
@@ -118,67 +125,61 @@ function toArgs(params) {
 }
 
 function prepare(sql) {
+  const text = toPg(sql);
   return {
-    sql,
+    sql: text,
 
     async get(...params) {
-      const res = await conn().execute({ sql, args: toArgs(params) });
-      return res.rows.length ? plain(res.rows[0]) : undefined;
+      const res = await conn().query(text, toArgs(params));
+      return res.rows.length ? res.rows[0] : undefined;
     },
 
     async all(...params) {
-      const res = await conn().execute({ sql, args: toArgs(params) });
-      return res.rows.map(plain);
+      const res = await conn().query(text, toArgs(params));
+      return res.rows;
     },
 
     async run(...params) {
-      const res = await conn().execute({ sql, args: toArgs(params) });
-      return {
-        changes: res.rowsAffected,
-        // libSQL hands this back as a BigInt; every caller wants a number.
-        lastInsertRowid: typeof res.lastInsertRowid === 'bigint'
-          ? Number(res.lastInsertRowid)
-          : res.lastInsertRowid,
-      };
+      const res = await conn().query(text, toArgs(params));
+      // Postgres has no "last insert id"; a statement that needs one says
+      // RETURNING, and the first returned column is it.
+      let lastInsertRowid;
+      if (res.rows && res.rows.length) {
+        const first = res.rows[0];
+        const key = Object.keys(first)[0];
+        if (key !== undefined) lastInsertRowid = first[key];
+      }
+      return { changes: res.rowCount, lastInsertRowid };
     },
   };
 }
 
 /** Run several statements separated by semicolons - schema.sql, mostly. */
 async function exec(sql) {
-  const active = txStore.getStore();
-  if (active) {
-    // executeMultiple does not exist on a transaction handle, and splitting
-    // SQL correctly needs a parser. Nothing in this codebase needs it.
-    throw new Error('db.exec() cannot be used inside a transaction');
-  }
-  await client.executeMultiple(sql);
-}
-
-/** PRAGMA, as a statement. Returns the rows, like better-sqlite3 did. */
-async function pragma(statement) {
-  const res = await conn().execute(`PRAGMA ${statement}`);
-  return res.rows.map(plain);
+  await conn().query(sql);
 }
 
 /**
  * Run fn inside a transaction; rolls back if it throws.
  *
  * Nesting joins the transaction already in scope rather than opening a
- * second one, which libSQL would reject.
+ * second one, which Postgres does not have.
  */
 function transaction(fn) {
   return async (...args) => {
     if (txStore.getStore()) return fn(...args);
 
-    const tx = await client.transaction('write');
+    const client = await pool.connect();
     try {
-      const out = await txStore.run(tx, () => fn(...args));
-      await tx.commit();
+      await client.query('BEGIN');
+      const out = await txStore.run(client, () => fn(...args));
+      await client.query('COMMIT');
       return out;
     } catch (err) {
-      try { await tx.rollback(); } catch (_) { /* already closed */ }
+      try { await client.query('ROLLBACK'); } catch (_) { /* already gone */ }
       throw err;
+    } finally {
+      client.release();
     }
   };
 }
@@ -186,9 +187,8 @@ function transaction(fn) {
 const db = {
   prepare,
   exec,
-  pragma,
   transaction,
-  close: () => client.close(),
+  close: () => pool.end(),
 };
 
 // ---------------------------------------------------------------------
@@ -196,52 +196,34 @@ const db = {
 // ---------------------------------------------------------------------
 
 /**
- * Apply the pragmas a local file needs, and check the one that matters
- * everywhere.
+ * Check the connection and report what we reached.
  *
- * WAL and synchronous are properties of a local file and mean nothing to a
- * remote database, so they are only sent in that case. Foreign keys are
- * different: the schema leans on ON DELETE CASCADE, and on Turso enforcement
- * is a property of the database rather than of this connection - so there it
- * is checked and reported rather than set.
+ * There is no PRAGMA setup to do here: Postgres enforces foreign keys
+ * always and has no journal mode to choose. What is worth doing is failing
+ * at startup on a bad connection string, rather than on whichever query
+ * happens to run first.
  */
 async function configure() {
-  if (!IS_REMOTE) {
-    // WAL lets readers run while a writer holds the lock - important once
-    // the dashboard polls while someone is saving a ticket.
-    await pragma('journal_mode = WAL');
-    await pragma('synchronous = NORMAL');
-    await pragma('busy_timeout = 5000');
-    await pragma('foreign_keys = ON');
-    return;
-  }
-
-  const [row] = await pragma('foreign_keys');
-  if (!row || !row.foreign_keys) {
-    console.warn(
-      '  Warning: foreign keys are not enforced on this database.\n' +
-      '  The schema relies on ON DELETE CASCADE, so deletes will leave\n' +
-      '  orphaned rows. Enable foreign keys on the Turso database.'
-    );
+  const res = await pool.query('SELECT current_database() AS db, version() AS v');
+  if (process.env.NODE_ENV !== 'test') {
+    const row = res.rows[0];
+    console.log(`  connected to ${row.db} (${row.v.split(',')[0]})`);
   }
 }
 
 /** Does a table exist? Used by the migration runner and by startup. */
 async function tableExists(name) {
-  const row = await prepare(
-    "SELECT 1 AS ok FROM sqlite_master WHERE type='table' AND name = ?"
-  ).get(name);
-  return !!row;
+  const res = await pool.query('SELECT to_regclass($1) IS NOT NULL AS present',
+    ['public.' + name]);
+  return !!res.rows[0].present;
 }
 
 module.exports = {
   db,
-  client,
+  pool,
   configure,
   transaction,
   tx: transaction,
   tableExists,
-  DB_FILE,
   DB_DESCRIPTION,
-  IS_REMOTE,
 };

@@ -2,55 +2,49 @@
 
 ## Picking a host
 
-The data layer is `@libsql/client`, which speaks SQLite either to a local
-file or to a hosted **Turso** database over the network. That one client is
-what makes the choice of host open:
+The database is PostgreSQL, reached over the network, so the app itself
+needs nothing from the filesystem. Any host will do:
 
 | Host | What it needs |
 | --- | --- |
-| Render, Railway, Fly, a VPS | a persistent disk; `DB_FILE` points at it |
-| Vercel or any serverless host | a Turso database; set `TURSO_DATABASE_URL` |
-| Your laptop | nothing - the default is `./data/crm.db` |
+| Vercel, or any serverless host | a Postgres; `POSTGRES_URL` is set for you by the integration |
+| Render, Railway, Fly, a VPS | the same, as `DATABASE_URL` |
+| Your laptop | `npm run db:local`, which brings its own Postgres |
 
-Serverless hosts run on a **read-only filesystem**. The only writable path is
-`/tmp`, which is wiped between invocations and is not shared between
-instances, so a SQLite file there would lose every write and serve different
-data to different users. `server/db/index.js` refuses to start in that
-situation rather than appearing to work: on Vercel, with no
-`TURSO_DATABASE_URL`, it fails with a message naming the missing variable.
+There is deliberately no local-file mode. Serverless hosts run on a
+read-only filesystem whose only writable path, `/tmp`, is wiped between
+invocations and not shared between instances, so a file-backed database
+would lose writes and serve different data to different users. Rather than
+support a mode that silently breaks in one deployment target,
+`server/db/index.js` requires a connection string and says so if it is
+missing.
 
 ---
 
-## Vercel + Turso
+## Vercel + Postgres
 
-**1. Create the database.**
+**1. Add a Postgres from inside Vercel.** Project → Storage → Create, and
+pick a Postgres provider from the marketplace (Neon is the default). This
+does not need a separate signup - it is provisioned against your Vercel
+account, and it sets `POSTGRES_URL` on the project automatically.
 
-```bash
-turso db create apple-crm
-turso db show apple-crm --url          # -> libsql://apple-crm-you.turso.io
-turso db tokens create apple-crm       # -> the auth token
-```
-
-**2. Load the schema and the demo data into it.** Run this locally, pointed
-at Turso, before the first deploy:
+**2. Load the schema and the demo data.** Nothing in Vercel's build does
+this, and the app will not create its own schema. Copy `POSTGRES_URL` out
+of the project settings and run, from this directory:
 
 ```bash
-TURSO_DATABASE_URL=libsql://... TURSO_AUTH_TOKEN=... npm run setup
+DATABASE_URL="postgres://..." npm run setup
 ```
 
-`npm run setup` is `migrate` then `seed`. There is no build step on Vercel
-that could do this for you, and the app will not create its own schema.
+`npm run setup` is `migrate` then `seed`.
 
-**3. Set the environment** in the Vercel project (Settings -> Environment
-Variables):
+**3. Set the rest of the environment** (Settings → Environment Variables):
 
 ```
-TURSO_DATABASE_URL   libsql://apple-crm-you.turso.io
-TURSO_AUTH_TOKEN     <the token>
-NODE_ENV             production
-REQUIRE_AUTH         true
-DEMO_LOGIN           false
-JWT_SECRET           <a long random string>
+NODE_ENV      production
+REQUIRE_AUTH  true
+DEMO_LOGIN    false
+JWT_SECRET    <a long random string>
 ```
 
 Generate the secret with
@@ -58,24 +52,23 @@ Generate the secret with
 
 **4. Deploy.** `vercel.json` routes every request to `api/index.js`, which
 hands it to the same Express app the server uses. There is no `listen()`
-there; the app is invoked per request, and `ready()` resolves the connection
-once per instance.
+there; the app is invoked per request, and `ready()` resolves the
+connection once per instance.
 
-### Foreign keys
+### Connections
 
-The schema relies on `ON DELETE CASCADE`. On a local file the connection
-sets `PRAGMA foreign_keys = ON`; on Turso enforcement is a property of the
-database, not of the connection, so the app checks it at startup and warns
-on the server log if it is off. Deleting a ticket would otherwise strand its
-messages and attachments.
+Each warm instance holds its own pool, so the pool is capped at one
+connection when `VERCEL` is set - a bigger pool per instance just exhausts
+the server's slots under load. Use the **pooled** connection string if the
+provider offers both; Neon's is the host with `-pooler` in it.
 
-### What is slower
+### Encoding
 
-Every statement is now a network round trip rather than a function call.
-`GET /api/state` issues on the order of fifty queries to assemble all 33
-collections, so expect it to take noticeably longer than the single-digit
-milliseconds it takes against a local file. Put the Turso database in the
-same region as the functions.
+Create the database as UTF8. The demo data contains characters outside
+Latin-1, and a WIN1252 database fails partway through seeding with an
+encoding error rather than at the start. Hosted Postgres is UTF8 by
+default; this is only a trap for a database you create yourself on Windows,
+which is why `npm run db:local` states the encoding explicitly.
 
 ---
 
@@ -85,8 +78,8 @@ same region as the functions.
 
 1. Push this repo to GitHub.
 2. Render dashboard → **New** → **Blueprint** → select the repo.
-3. Confirm. Render reads `render.yaml` and creates the service plus a 1 GB
-   disk mounted at `/var/data`.
+3. Confirm. Render reads `render.yaml` and creates the web service plus a
+   managed Postgres, wiring `DATABASE_URL` between them.
 
 The blueprint's start command is `node server/db/bootstrap.js && node
 server/index.js`. `bootstrap.js` applies the schema and seeds the demo data
@@ -96,14 +89,15 @@ alone.
 
 The blueprint sets:
 
-- `DB_FILE=/var/data/crm.db` — on the persistent disk, so deploys do not
-  reset your data
+- `DATABASE_URL` — taken from the managed Postgres the blueprint creates,
+  so the data outlives the instance
 - `REQUIRE_AUTH=true` — the app is reachable from the internet, so it should
   not be open
 - `JWT_SECRET` — generated by Render, never committed
 
-The free plan has **no persistent disk**, so the database would reset on every
-restart. The blueprint uses `starter` for that reason.
+There is no disk to pay for any more, but Render's free Postgres expires
+after 30 days, so the blueprint asks for a paid database tier. The web
+service itself can run on a smaller plan if you prefer.
 
 ### First sign-in
 
@@ -128,11 +122,11 @@ docker build -t aglc-crm .
 ```
 
 ```bash
-docker run -p 4000:4000 -v aglc-data:/app/data -e REQUIRE_AUTH=true -e JWT_SECRET="$(openssl rand -hex 32)" aglc-crm
+docker run -p 4000:4000 -e DATABASE_URL="postgres://..." -e REQUIRE_AUTH=true -e JWT_SECRET="$(openssl rand -hex 32)" aglc-crm
 ```
 
-The `-v` volume is not optional in production. Without it the database lives
-inside the container layer and is destroyed on every restart.
+No volume is needed. The container holds no data - `DATABASE_URL` points at
+a Postgres somewhere else, and the image can be replaced at will.
 
 `docker-entrypoint.sh` runs the same `bootstrap.js`: schema applied every
 boot, demo data loaded only when there are no users. A redeploy never wipes
@@ -194,10 +188,12 @@ With `REQUIRE_AUTH=true`:
 
 ## Backing up
 
-The database is a single file. Copy it while the server is running with:
-
 ```bash
-sqlite3 /var/data/crm.db ".backup '/var/data/backup-$(date +%F).db'"
+pg_dump "$DATABASE_URL" --no-owner --format=custom --file="backup-$(date +%F).dump"
 ```
 
-Plain `cp` is not safe on a live database in WAL mode.
+Restore with `pg_restore --clean --no-owner --dbname "$DATABASE_URL"`.
+
+Most hosted providers also take their own snapshots - Neon keeps a restore
+window, and Render backs up daily on the paid tiers - so this is for copies
+you want to hold yourself.

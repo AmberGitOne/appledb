@@ -24,3 +24,6 @@ npm-debug.log*
 .DS_Store
 Thumbs.db
 desktop.ini
+
+# Local development Postgres cluster (npm run db:local).
+data/pgdata/

@@ -26,7 +26,7 @@ router.post('/login', wrap(async (req, res) => {
     throw unauthorized('Email or password is incorrect');
   }
 
-  await db.prepare("UPDATE users SET last_login_at = datetime('now') WHERE id = ?").run(row.id);
+  await db.prepare('UPDATE users SET last_login_at = now_text() WHERE id = ?').run(row.id);
   const user = await hydrate(row.id);
   const token = sign(user);
 
@@ -56,8 +56,8 @@ router.get('/accounts', wrap(async (req, res) => {
     return res.json({ demo: false, requireAuth: REQUIRE_AUTH, data: [] });
   }
   const rows = await db.prepare(`
-    SELECT u.id, u.email, u.name, u.desk, u.job_title AS jobTitle, u.avatar,
-           u.role_id AS roleId, r.name AS roleName, r.description AS roleDescription
+    SELECT u.id, u.email, u.name, u.desk, u.job_title AS "jobTitle", u.avatar,
+           u.role_id AS "roleId", r.name AS "roleName", r.description AS "roleDescription"
     FROM users u JOIN roles r ON r.id = u.role_id
     WHERE u.active = 1
     ORDER BY r.id, u.name

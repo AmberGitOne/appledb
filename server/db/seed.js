@@ -117,12 +117,23 @@ const { DEMO_PASSWORD: DEFAULT_PASSWORD } = require('../lib/demo');
 async function seed() {
   console.log('Seeding...');
 
-  await db.pragma('foreign_keys = OFF');
-  for (const t of DATA_TABLES) {
-    try { await db.prepare(`DELETE FROM ${t}`).run(); } catch (_) { /* table may not exist */ }
+  // One TRUNCATE rather than a DELETE per table: CASCADE settles the
+  // ordering that foreign keys would otherwise impose, and RESTART IDENTITY
+  // resets the sequences so a reseed produces the same ids as a first run.
+  // Under SQLite this needed foreign_keys=OFF and a poke at sqlite_sequence;
+  // neither has an equivalent here, and neither is needed.
+  const present = await db.prepare(
+    `SELECT table_name FROM information_schema.tables
+      WHERE table_schema = 'public' AND table_type = 'BASE TABLE'`
+  ).all();
+  const names = new Set(present.map((r) => r.table_name));
+  const clear = DATA_TABLES.filter((t) => names.has(t));
+  if (clear.length) {
+    await db.exec(
+      'TRUNCATE TABLE ' + clear.map((t) => '"' + t + '"').join(', ') +
+      ' RESTART IDENTITY CASCADE'
+    );
   }
-  await db.prepare("DELETE FROM sqlite_sequence WHERE name NOT IN ('schema_migrations')").run();
-  await db.pragma('foreign_keys = ON');
 
   const counts = {};
   const bump = (k, n = 1) => { counts[k] = (counts[k] || 0) + n; };
@@ -142,7 +153,7 @@ async function seed() {
   }
 
   const insRP = db.prepare(
-    'INSERT OR IGNORE INTO role_permissions (role_id,permission_id) VALUES (?,?)'
+    'INSERT INTO role_permissions (role_id,permission_id) VALUES (?,?) ON CONFLICT DO NOTHING'
   );
   for (const [roleId] of ROLES) {
     for (const perm of roleGrants(roleId)) { await insRP.run(roleId, perm); bump('role_permissions'); }
@@ -331,14 +342,15 @@ async function seed() {
   );
   const insMsg = db.prepare(
     `INSERT INTO ticket_messages (ticket_id,position,author,direction,channel,at_label,body)
-     VALUES (?,?,?,?,?,?,?)`
+     VALUES (?,?,?,?,?,?,?)
+     RETURNING id`
   );
   const insAtt = db.prepare(
     `INSERT INTO attachments (message_id,ticket_id,filename,file_type,size_label)
      VALUES (?,?,?,?,?)`
   );
   const insTL = db.prepare(
-    'INSERT OR IGNORE INTO ticket_labels (ticket_id,label_id) VALUES (?,?)'
+    'INSERT INTO ticket_labels (ticket_id,label_id) VALUES (?,?) ON CONFLICT DO NOTHING'
   );
   const labelIds = new Set((SEED.labels || []).map((l) => l.id));
   const VALID_FOLDERS = new Set(['inbox', 'sent', 'drafts', 'trash', 'spam', 'closed']);
@@ -618,7 +630,7 @@ async function seed() {
      VALUES (?,?,?,?,?,?,?,?,?,?)`
   );
   const insEB = db.prepare(
-    'INSERT OR IGNORE INTO employee_benefits (employee_id,benefit_id) VALUES (?,?)'
+    'INSERT INTO employee_benefits (employee_id,benefit_id) VALUES (?,?) ON CONFLICT DO NOTHING'
   );
   for (const [i, e] of (SEED.employees || []).entries()) {
     await insEmp.run(e.id, e.name, str(e.dept), str(e.doa), str(e.sal), str(e.leave),

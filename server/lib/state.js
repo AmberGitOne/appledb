@@ -32,11 +32,11 @@ const MAIN_CASE_KEY = 'caseManager';   // settings key holding the case manager
 const selSettings = db.prepare('SELECT key, value, value_type FROM settings');
 const upsertSetting = db.prepare(`
   INSERT INTO settings (key, value, value_type, updated_at)
-  VALUES (?, ?, ?, datetime('now'))
+  VALUES (?, ?, ?, now_text())
   ON CONFLICT(key) DO UPDATE SET
     value = excluded.value,
     value_type = excluded.value_type,
-    updated_at = datetime('now')
+    updated_at = now_text()
 `);
 
 async function readSettings() {
@@ -655,7 +655,7 @@ async function writeStateInner(state, actor) {
         if (JSON.stringify(currentLabels) !== JSON.stringify(wantedLabels)) {
           (await db.prepare('DELETE FROM ticket_labels WHERE ticket_id = ?')).run(ticketId);
           const ins = db.prepare(
-            'INSERT OR IGNORE INTO ticket_labels (ticket_id, label_id) VALUES (?,?)'
+            'INSERT INTO ticket_labels (ticket_id, label_id) VALUES (?,?) ON CONFLICT DO NOTHING'
           );
           for (const l of wantedLabels) await ins.run(ticketId, l);
         }
@@ -870,7 +870,7 @@ async function writeStateInner(state, actor) {
     const benefitByName = new Map(
       (await db.prepare('SELECT id, name FROM benefits').all()).map((r) => [r.name, r.id])
     );
-    const insBenefit = db.prepare('INSERT OR IGNORE INTO benefits (id, name) VALUES (?,?)');
+    const insBenefit = db.prepare('INSERT INTO benefits (id, name) VALUES (?,?) ON CONFLICT DO NOTHING');
 
     await syncCollection({
       table: 'employees', pk: 'id', entity: 'employees', rows: state.employees,
@@ -896,7 +896,7 @@ async function writeStateInner(state, actor) {
         if (JSON.stringify(current) !== JSON.stringify([...new Set(wanted)])) {
           (await db.prepare('DELETE FROM employee_benefits WHERE employee_id = ?')).run(empId);
           const ins = db.prepare(
-            'INSERT OR IGNORE INTO employee_benefits (employee_id, benefit_id) VALUES (?,?)'
+            'INSERT INTO employee_benefits (employee_id, benefit_id) VALUES (?,?) ON CONFLICT DO NOTHING'
           );
           for (const bid of new Set(wanted)) await ins.run(empId, bid);
         }

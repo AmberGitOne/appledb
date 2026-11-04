@@ -1,25 +1,25 @@
 # Apple Globalcare CRM
 #
-# Runs anywhere that gives a container a persistent volume:
-# Render, Railway, Fly.io, a VPS, Docker Desktop.
+# Runs anywhere that can run a container: Render, Railway, Fly.io, a VPS,
+# Docker Desktop.
 #
 #   docker build -t aglc-crm .
-#   docker run -p 4000:4000 -v aglc-data:/app/data aglc-crm
+#   docker run -p 4000:4000 -e DATABASE_URL=postgres://... aglc-crm
 #
-# The volume matters: the SQLite database lives in /app/data, and without a
-# volume every container restart would reset it to the seeded demo data.
+# No volume is needed. The data lives in PostgreSQL, reached over the
+# network, so the container filesystem is disposable and the image can be
+# replaced at any time without touching a record.
 
 FROM node:22-slim
 
 WORKDIR /app
 
 ENV NODE_ENV=production \
-    PORT=4000 \
-    DB_FILE=/app/data/crm.db
+    PORT=4000
 
 # Install dependencies first so this layer caches across code changes.
-# ignore-scripts uses better-sqlite3's bundled prebuild instead of compiling,
-# so no build toolchain is needed in the image.
+# ignore-scripts is safe here: pg is pure JavaScript and nothing in the
+# production dependency tree needs to compile, so no toolchain is required.
 COPY package.json package-lock.json .npmrc ./
 RUN npm ci --omit=dev --ignore-scripts --no-audit --no-fund
 

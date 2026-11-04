@@ -1,16 +1,24 @@
 # Render blueprint.
 #
 # In the Render dashboard: New -> Blueprint -> point it at this repo.
-# Render reads this file and provisions the service and its disk.
+# Render reads this file and provisions the web service and its database.
 #
-# The disk is the important part. Render's filesystem is otherwise ephemeral,
-# so without it the SQLite database would reset on every deploy and restart.
+# There is no disk here any more. The app talks to PostgreSQL over the
+# network, so the filesystem is disposable and Render can replace the
+# instance freely without touching the data.
+
+databases:
+  - name: aglc-crm-db
+    databaseName: crm
+    user: crm
+    plan: basic-256mb
+    region: oregon
 
 services:
   - type: web
     name: apple-globalcare-crm
     runtime: node
-    plan: starter          # the free plan has no persistent disk
+    plan: starter
     region: oregon
     branch: main
 
@@ -24,16 +32,15 @@ services:
 
     healthCheckPath: /api/health
 
-    disk:
-      name: crm-data
-      mountPath: /var/data
-      sizeGB: 1
-
     envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: aglc-crm-db
+          property: connectionString
+
       - key: NODE_ENV
         value: production
-      - key: DB_FILE
-        value: /var/data/crm.db
+
       - key: REQUIRE_AUTH
         value: "true"      # the app is reachable from the internet here
 
@@ -42,7 +49,9 @@ services:
       # URL. NODE_ENV=production already turns it off; this says so outright.
       - key: DEMO_LOGIN
         value: "false"
+
       - key: JWT_SECRET
         generateValue: true
+
       - key: TOKEN_TTL
         value: 12h

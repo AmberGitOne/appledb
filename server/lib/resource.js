@@ -32,7 +32,11 @@ function columnsOf(table) {
   if (!columnCache.has(table)) {
     columnCache.set(
       table,
-      db.prepare(`PRAGMA table_info(${table})`).all().then((rows) => {
+      db.prepare(
+        `SELECT column_name AS name FROM information_schema.columns
+          WHERE table_schema = 'public' AND table_name = ?
+          ORDER BY ordinal_position`
+      ).all(table).then((rows) => {
         const names = rows.map((c) => c.name);
         if (!names.length) throw new Error(`resource(): unknown table "${table}"`);
         return names;
@@ -234,23 +238,33 @@ function normalise(v) {
   return v;
 }
 
-/** Turn SQLite constraint errors into useful 4xx responses. */
+/**
+ * Turn Postgres constraint errors into useful 4xx responses.
+ *
+ * Keyed on SQLSTATE rather than on the message, which is localised and
+ * version-dependent. The detail carries the constraint name so a caller can
+ * see which rule it broke.
+ */
 function translate(err) {
-  const m = String(err.message || '');
-  if (err.code === 'SQLITE_CONSTRAINT_UNIQUE' || m.includes('UNIQUE constraint')) {
-    return conflict('That value is already taken', { sqlite: m });
+  const detail = { constraint: err.constraint, postgres: String(err.message || '') };
+  switch (err.code) {
+    case '23505':                                   // unique_violation
+      return conflict('That value is already taken', detail);
+    case '23514':                                   // check_violation
+      return badRequest('A field is outside its allowed set of values', detail);
+    case '23503':                                   // foreign_key_violation
+      return conflict(
+        'That record is referenced by other rows, or points at one that does not exist',
+        detail);
+    case '23502':                                   // not_null_violation
+      return badRequest('A required field was missing', detail);
+    case '22001':                                   // string_data_right_truncation
+      return badRequest('A value is too long for its column', detail);
+    case '22P02':                                   // invalid_text_representation
+      return badRequest('A value is not of the expected type', detail);
+    default:
+      return err;
   }
-  if (err.code === 'SQLITE_CONSTRAINT_CHECK' || m.includes('CHECK constraint')) {
-    return badRequest('A field is outside its allowed set of values', { sqlite: m });
-  }
-  if (err.code === 'SQLITE_CONSTRAINT_FOREIGNKEY' || m.includes('FOREIGN KEY')) {
-    return conflict('That record is referenced by other rows, or points at one that does not exist',
-      { sqlite: m });
-  }
-  if (err.code === 'SQLITE_CONSTRAINT_NOTNULL' || m.includes('NOT NULL')) {
-    return badRequest('A required field was missing', { sqlite: m });
-  }
-  return err;
 }
 
 module.exports = { resource, columnsOf, warmup };

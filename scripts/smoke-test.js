@@ -191,9 +191,24 @@ async function main() {
 
   // ---- integrity --------------------------------------------------------
   console.log('\n-- integrity --');
-  check('no foreign key violations', (await db.pragma('foreign_key_check')).length === 0);
-  const ic = await db.pragma('integrity_check');
-  check('sqlite integrity_check is ok', ic[0]?.integrity_check === 'ok');
+  // SQLite needed foreign_key_check and integrity_check because it can be
+  // configured not to enforce, and a file can be corrupted in place.
+  // Postgres enforces always, so the useful question is a different one:
+  // are the constraints actually there, and does the server consider them
+  // validated rather than NOT VALID?
+  const fks = await many(
+    `SELECT conname, convalidated FROM pg_constraint
+      WHERE contype = 'f'
+        AND connamespace = 'public'::regnamespace`
+  );
+  check('foreign keys are defined', fks.length > 0, fks.length + ' constraints');
+  check('every foreign key is validated', fks.every((c) => c.convalidated));
+  const orphanCheck = await one(
+    `SELECT COUNT(*) AS n FROM ticket_messages m
+      LEFT JOIN tickets t ON t.id = m.ticket_id
+      WHERE t.id IS NULL`
+  );
+  check('no orphaned ticket messages', Number(orphanCheck.n) === 0);
 
   // ---- auth ------------------------------------------------------------
   console.log('\n-- auth --');
