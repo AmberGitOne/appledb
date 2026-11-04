@@ -96,11 +96,29 @@ app.use((err, req, res, _next) => {
  * instance that has already done this, and the ones that arrive during a
  * cold start must all wait on the same promise rather than racing.
  */
+
+/**
+ * Should a cold start prepare an empty database itself?
+ *
+ * A serverless host runs this file as a function and never runs a start
+ * command, so there is no deploy step to put `node server/db/bootstrap.js`
+ * in - the first request has to do it or the deployment answers 500 until
+ * someone loads the schema by hand. Hosts that *do* have a start command
+ * (Render, Docker) use start:prod and should leave this off, so that a boot
+ * is one predictable thing rather than two.
+ */
+const AUTO_BOOTSTRAP = process.env.AUTO_BOOTSTRAP !== undefined
+  ? String(process.env.AUTO_BOOTSTRAP).toLowerCase() === 'true'
+  : Boolean(process.env.VERCEL);
+
 let readyPromise = null;
 function ready() {
   if (!readyPromise) {
     readyPromise = (async () => {
       await configure();
+      // Before warmup, which reads each table's columns and memoises them:
+      // against a database with no schema it would cache empty whitelists.
+      if (AUTO_BOOTSTRAP) await require('./db/bootstrap').ensureDatabase();
       await warmup();
     })();
   }

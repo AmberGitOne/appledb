@@ -230,7 +230,7 @@ function resource(cfg) {
   return router;
 }
 
-/** JS values -> values SQLite will accept. */
+/** JS values -> values the driver will accept. */
 function normalise(v) {
   if (typeof v === 'boolean') return v ? 1 : 0;
   if (v === null || v === undefined) return null;

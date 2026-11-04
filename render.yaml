@@ -50,6 +50,13 @@ services:
       - key: DEMO_LOGIN
         value: "false"
 
+      # The seeded accounts share one password, and the repository's default
+      # is public, so the boot step refuses to use it under NODE_ENV=production.
+      # Render generates one instead - read it in the dashboard under
+      # Environment when you need to sign in.
+      - key: DEMO_PASSWORD
+        generateValue: true
+
       - key: JWT_SECRET
         generateValue: true
 

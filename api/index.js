@@ -10,9 +10,14 @@
  * it throws has to be answered here, because there is no process left to
  * crash into a restart the way a long-running server would.
  *
- * This host has a read-only filesystem, so DB_FILE is not an option:
- * TURSO_DATABASE_URL and TURSO_AUTH_TOKEN have to be set in the project's
- * environment. server/db/index.js says so plainly if they are missing.
+ * This host has a read-only filesystem, so a local database file is not an
+ * option: POSTGRES_URL has to be set in the project's environment. The
+ * Vercel Postgres integration sets it; server/db/index.js says so plainly
+ * if it is missing.
+ *
+ * ready() also prepares an empty database on the first cold start, since
+ * this host runs a function and never a start command - see AUTO_BOOTSTRAP
+ * in server/index.js.
  */
 
 const { app, ready } = require('../server');

@@ -2,7 +2,7 @@
   "name": "apple-globalcare-crm",
   "version": "1.0.0",
   "private": true,
-  "description": "Apple Globalcare CRM - full stack (Express + SQLite) pharmaceutical sourcing and patient services CRM",
+  "description": "Apple Globalcare CRM - full stack (Express + PostgreSQL) pharmaceutical sourcing and patient services CRM",
   "main": "server/index.js",
   "type": "commonjs",
   "scripts": {

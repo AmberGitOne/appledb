@@ -17,7 +17,7 @@
 
 const path = require('path');
 const { AsyncLocalStorage } = require('async_hooks');
-const { Pool, types } = require('pg');
+const { Pool, Client, types } = require('pg');
 
 require('dotenv').config({ path: path.join(__dirname, '..', '..', '.env') });
 
@@ -211,6 +211,35 @@ async function configure() {
   }
 }
 
+/**
+ * Run fn while holding a cluster-wide lock, so only one process runs it.
+ *
+ * This exists for the first-boot schema load on a serverless host, where
+ * several cold starts can arrive at once and each would otherwise try to
+ * create the same tables. An advisory lock lives on its own connection and
+ * is released when that connection closes, so a crashed instance cannot
+ * leave the lock held - which is the failure a lock *table* would have.
+ *
+ * The connection is a standalone Client rather than one from the pool: the
+ * pool holds a single connection on Vercel, and checking it out to wait on
+ * the lock would leave fn with nothing to query through.
+ */
+async function withAdvisoryLock(key, fn) {
+  const client = new Client({
+    connectionString: CONNECTION_URL,
+    ssl: IS_LOCAL ? false : { rejectUnauthorized: false },
+  });
+  await client.connect();
+  try {
+    await client.query('SELECT pg_advisory_lock($1)', [key]);
+    return await fn();
+  } finally {
+    // Releasing explicitly is tidier, but end() would drop the lock anyway.
+    try { await client.query('SELECT pg_advisory_unlock($1)', [key]); } catch (_) { /* gone */ }
+    await client.end().catch(() => {});
+  }
+}
+
 /** Does a table exist? Used by the migration runner and by startup. */
 async function tableExists(name) {
   const res = await pool.query('SELECT to_regclass($1) IS NOT NULL AS present',
@@ -225,5 +254,6 @@ module.exports = {
   transaction,
   tx: transaction,
   tableExists,
+  withAdvisoryLock,
   DB_DESCRIPTION,
 };

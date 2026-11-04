@@ -15,7 +15,7 @@
 const { db } = require('../db');
 const audit = require('./audit');
 
-const b = (v) => (v ? 1 : 0);          // -> SQLite integer boolean
+const b = (v) => (v ? 1 : 0);          // -> integer boolean column
 const B = (v) => !!v;                  // -> JS boolean
 const s = (v) => (v === undefined || v === null ? '' : String(v));
 const n = (v) => {

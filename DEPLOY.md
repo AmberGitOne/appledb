@@ -28,32 +28,69 @@ pick a Postgres provider from the marketplace (Neon is the default). This
 does not need a separate signup - it is provisioned against your Vercel
 account, and it sets `POSTGRES_URL` on the project automatically.
 
-**2. Load the schema and the demo data.** Nothing in Vercel's build does
-this, and the app will not create its own schema. Copy `POSTGRES_URL` out
-of the project settings and run, from this directory:
+**2. Set the rest of the environment** (Settings → Environment Variables),
+for all three environments:
+
+```
+NODE_ENV        production
+REQUIRE_AUTH    true
+DEMO_LOGIN      false
+DEMO_PASSWORD   <a password of your own>
+JWT_SECRET      <a long random string>
+```
+
+Generate the secret with:
 
 ```bash
-DATABASE_URL="postgres://..." npm run setup
+node -e "console.log(require('crypto').randomBytes(48).toString('hex'))"
 ```
 
-`npm run setup` is `migrate` then `seed`.
+`DEMO_PASSWORD` is not optional here. Every seeded account shares one
+password, and this repository's default is public in `server/lib/demo.js`,
+so a deployment that used it would be an open system behind a login form.
+The boot step refuses to seed under `NODE_ENV=production` while the default
+is still in place, and says so.
 
-**3. Set the rest of the environment** (Settings → Environment Variables):
+It has to be set **before the first request**, because that is what creates
+the accounts; setting it afterwards changes nothing. To change it later,
+drop the tables and let the next request rebuild them, or update the hashes
+directly.
 
+**3. Deploy.** Nothing else to do: the first request prepares the database
+itself. `vercel.json` routes every request to `api/index.js`, which hands
+it to the same Express app the server uses. There is no `listen()` there;
+the app is invoked per request, and `ready()` resolves the connection once
+per instance.
+
+### The first request
+
+Vercel runs a function, not a start command, so there is nowhere to put a
+deploy step like Render's `node server/db/bootstrap.js`. The first cold
+start does it instead - `AUTO_BOOTSTRAP`, which defaults on whenever
+`VERCEL` is set.
+
+It costs nothing once the database is populated: the fast path is two
+queries, and it never reaches the migration runner. When the database *is*
+empty it takes a Postgres advisory lock first, because a deploy's opening
+burst of traffic cold-starts several instances at once and each would
+otherwise try to create the same tables. The lock lives on its own
+connection, so an instance that dies cannot leave it held.
+
+Schema changes after that first deploy stay deliberate - this only builds a
+database that has no users yet. When `schema.sql` moves forward, run the
+migration yourself against `POSTGRES_URL`:
+
+```powershell
+$env:DATABASE_URL="postgres://..."; npm run migrate
 ```
-NODE_ENV      production
-REQUIRE_AUTH  true
-DEMO_LOGIN    false
-JWT_SECRET    <a long random string>
+
+```bash
+DATABASE_URL="postgres://..." npm run migrate   # bash/zsh
 ```
 
-Generate the secret with
-`node -e "console.log(require('crypto').randomBytes(48).toString('hex'))"`.
-
-**4. Deploy.** `vercel.json` routes every request to `api/index.js`, which
-hands it to the same Express app the server uses. There is no `listen()`
-there; the app is invoked per request, and `ready()` resolves the
-connection once per instance.
+Note the two forms. PowerShell has no inline `VAR=value command` syntax -
+it reads the whole thing as a command name and reports that it does not
+exist.
 
 ### Connections
 

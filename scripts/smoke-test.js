@@ -4,8 +4,8 @@
  *
  *   npm test                 (expects the server on PORT, default 4000)
  *
- * Drives the real HTTP API the way the browser does, then reads the SQLite
- * file directly to confirm the data actually landed in the right tables.
+ * Drives the real HTTP API the way the browser does, then reads the
+ * database directly to confirm the data actually landed in the right tables.
  * Restores the database to the seeded state when it finishes.
  */
 
