@@ -41,12 +41,46 @@ if (!CONNECTION_URL) {
   );
 }
 
-/** Hosted Postgres wants TLS; a local test server does not have it. */
-const IS_LOCAL = /@(localhost|127\.0\.0\.1|\[::1\])[:/]/.test(CONNECTION_URL);
+/**
+ * A direct connection string, when the provider gives one.
+ *
+ * Neon's pooled endpoint - the hostname with `-pooler` in it, which is the
+ * one to serve traffic through - is PgBouncer in transaction mode, and that
+ * does not keep a client on the same server connection between statements.
+ * Anything session-scoped is therefore unreliable through it, including the
+ * advisory lock the first-boot path depends on: the lock and its unlock can
+ * land on different backends. Neon and the Vercel integration both publish
+ * the direct string next to the pooled one, under these names.
+ */
+const DIRECT_URL = (
+  process.env.DATABASE_URL_UNPOOLED ||
+  process.env.POSTGRES_URL_NON_POOLING ||
+  CONNECTION_URL
+).trim();
+
+/**
+ * TLS, and whether to verify the server's certificate.
+ *
+ * A local test server has no TLS at all, so it is detected per URL rather
+ * than once - the pooled and direct strings can differ.
+ *
+ * Skipping verification leaves the connection open to interception: TLS
+ * without it only hides the traffic from a passive observer, not from
+ * anything sitting in the path. Hosted Postgres - Neon, Render, Supabase -
+ * presents a certificate from a public CA, which Node's bundled roots
+ * verify without help. DB_SSL_NO_VERIFY exists for a provider that only
+ * offers a self-signed certificate, and it has to be asked for.
+ */
+const SSL_NO_VERIFY = String(process.env.DB_SSL_NO_VERIFY).toLowerCase() === 'true';
+
+function sslFor(url) {
+  if (/@(localhost|127\.0\.0\.1|\[::1\])[:/]/.test(url)) return false;
+  return { rejectUnauthorized: !SSL_NO_VERIFY };
+}
 
 const pool = new Pool({
   connectionString: CONNECTION_URL,
-  ssl: IS_LOCAL ? false : { rejectUnauthorized: false },
+  ssl: sslFor(CONNECTION_URL),
   // A serverless instance handles one request at a time and every instance
   // holds its own pool, so a larger one only exhausts the server's slots.
   max: process.env.VERCEL ? 1 : 10,
@@ -226,16 +260,26 @@ async function configure() {
  */
 async function withAdvisoryLock(key, fn) {
   const client = new Client({
-    connectionString: CONNECTION_URL,
-    ssl: IS_LOCAL ? false : { rejectUnauthorized: false },
+    connectionString: DIRECT_URL,
+    ssl: sslFor(DIRECT_URL),
   });
   await client.connect();
   try {
-    await client.query('SELECT pg_advisory_lock($1)', [key]);
-    return await fn();
+    // pg_advisory_xact_lock, not pg_advisory_lock: a transaction-scoped
+    // lock survives a pooler, because the whole transaction is pinned to
+    // one backend, and it is released by COMMIT or ROLLBACK - so it cannot
+    // be stranded by an instance that dies holding it either.
+    await client.query('BEGIN');
+    await client.query('SELECT pg_advisory_xact_lock($1)', [key]);
+    try {
+      const out = await fn();
+      await client.query('COMMIT');
+      return out;
+    } catch (err) {
+      await client.query('ROLLBACK').catch(() => {});
+      throw err;
+    }
   } finally {
-    // Releasing explicitly is tidier, but end() would drop the lock anyway.
-    try { await client.query('SELECT pg_advisory_unlock($1)', [key]); } catch (_) { /* gone */ }
     await client.end().catch(() => {});
   }
 }

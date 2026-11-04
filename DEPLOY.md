@@ -96,8 +96,43 @@ exist.
 
 Each warm instance holds its own pool, so the pool is capped at one
 connection when `VERCEL` is set - a bigger pool per instance just exhausts
-the server's slots under load. Use the **pooled** connection string if the
-provider offers both; Neon's is the host with `-pooler` in it.
+the server's slots under load.
+
+Serve traffic through the **pooled** connection string when the provider
+offers both. Neon's is the host with `-pooler` in it, and pooling matters
+most here, where a burst of cold starts each wants a connection at once.
+
+But set the **direct** string as well, under either name the providers use:
+
+```
+DATABASE_URL_UNPOOLED        (Neon)
+POSTGRES_URL_NON_POOLING     (the Vercel integration)
+```
+
+Neon's pooled endpoint is PgBouncer in transaction mode, which does not
+keep a client on one backend between statements, so nothing session-scoped
+can be trusted through it. The first-boot lock is exactly that, and it
+takes the direct string when one is published. `POSTGRES_URL` alone still
+works - a single endpoint is used for both - but on Neon the lock is then
+only as reliable as the pooler, so set both.
+
+Run schema migrations over the direct string too:
+
+```powershell
+$env:DATABASE_URL="postgres://...  (no -pooler)"; npm run migrate
+```
+
+### TLS
+
+Certificates are verified. Hosted Postgres presents one from a public CA,
+which Node's bundled roots accept without configuration, and a local
+server is detected by its address and connects without TLS at all.
+
+`DB_SSL_NO_VERIFY=true` turns verification off for a provider that only
+offers a self-signed certificate. Prefer not to: TLS without verification
+hides traffic from a passive observer but not from anything in the path,
+which for a database connection carrying every record and session token is
+most of the point.
 
 ### Encoding
 

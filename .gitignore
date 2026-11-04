@@ -27,3 +27,10 @@ desktop.ini
 
 # Local development Postgres cluster (npm run db:local).
 data/pgdata/
+
+# Agent skills installed by `npx neon skills`. skills-lock.json is committed
+# and is enough to reinstall them, the way package-lock.json is for
+# node_modules - so the ~600K of vendored markdown stays out of the repo.
+# Commit .claude/skills/ instead if you would rather a fresh clone have them
+# without running anything.
+.claude/skills/
