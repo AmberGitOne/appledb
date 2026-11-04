@@ -1,28 +1,81 @@
 # Deploying
 
-## Read this first: why not Vercel
+## Picking a host
 
-Vercel runs serverless functions on a **read-only filesystem**. The only
-writable path is `/tmp`, which is wiped between invocations and is not shared
-between instances.
+The data layer is `@libsql/client`, which speaks SQLite either to a local
+file or to a hosted **Turso** database over the network. That one client is
+what makes the choice of host open:
 
-This app writes to SQLite on almost every interaction — starring a ticket,
-approving leave, releasing a batch. On Vercel those writes would be lost
-immediately, and two users could be served different data by different
-instances. The app would look like it worked while silently discarding
-everything.
-
-So Vercel needs one of these first:
-
-| Option | Code changes |
+| Host | What it needs |
 | --- | --- |
-| Host with a persistent disk (Render, Railway, Fly, a VPS) | **none** |
-| Vercel + Turso (hosted SQLite / libSQL) | convert ~200 synchronous DB calls across 12 files to async |
-| Vercel + Postgres or Neon | the same async conversion, plus SQL dialect changes |
-| Vercel, read-only demo | none, but every edit fails |
+| Render, Railway, Fly, a VPS | a persistent disk; `DB_FILE` points at it |
+| Vercel or any serverless host | a Turso database; set `TURSO_DATABASE_URL` |
+| Your laptop | nothing - the default is `./data/crm.db` |
 
-The rest of this file covers the first option, which runs the app exactly as
-it runs locally.
+Serverless hosts run on a **read-only filesystem**. The only writable path is
+`/tmp`, which is wiped between invocations and is not shared between
+instances, so a SQLite file there would lose every write and serve different
+data to different users. `server/db/index.js` refuses to start in that
+situation rather than appearing to work: on Vercel, with no
+`TURSO_DATABASE_URL`, it fails with a message naming the missing variable.
+
+---
+
+## Vercel + Turso
+
+**1. Create the database.**
+
+```bash
+turso db create apple-crm
+turso db show apple-crm --url          # -> libsql://apple-crm-you.turso.io
+turso db tokens create apple-crm       # -> the auth token
+```
+
+**2. Load the schema and the demo data into it.** Run this locally, pointed
+at Turso, before the first deploy:
+
+```bash
+TURSO_DATABASE_URL=libsql://... TURSO_AUTH_TOKEN=... npm run setup
+```
+
+`npm run setup` is `migrate` then `seed`. There is no build step on Vercel
+that could do this for you, and the app will not create its own schema.
+
+**3. Set the environment** in the Vercel project (Settings -> Environment
+Variables):
+
+```
+TURSO_DATABASE_URL   libsql://apple-crm-you.turso.io
+TURSO_AUTH_TOKEN     <the token>
+NODE_ENV             production
+REQUIRE_AUTH         true
+DEMO_LOGIN           false
+JWT_SECRET           <a long random string>
+```
+
+Generate the secret with
+`node -e "console.log(require('crypto').randomBytes(48).toString('hex'))"`.
+
+**4. Deploy.** `vercel.json` routes every request to `api/index.js`, which
+hands it to the same Express app the server uses. There is no `listen()`
+there; the app is invoked per request, and `ready()` resolves the connection
+once per instance.
+
+### Foreign keys
+
+The schema relies on `ON DELETE CASCADE`. On a local file the connection
+sets `PRAGMA foreign_keys = ON`; on Turso enforcement is a property of the
+database, not of the connection, so the app checks it at startup and warns
+on the server log if it is off. Deleting a ticket would otherwise strand its
+messages and attachments.
+
+### What is slower
+
+Every statement is now a network round trip rather than a function call.
+`GET /api/state` issues on the order of fifty queries to assemble all 33
+collections, so expect it to take noticeably longer than the single-digit
+milliseconds it takes against a local file. Put the Turso database in the
+same region as the functions.
 
 ---
 

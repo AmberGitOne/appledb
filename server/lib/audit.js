@@ -23,8 +23,8 @@ const json = (v) => (v === undefined || v === null ? null : JSON.stringify(v));
  * @param {string}  action create | update | delete | login | logout | reset
  * @param {string}  entity table or logical entity name
  */
-function record(actor, action, entity, entityId, before, after, ip) {
-  insert.run(
+async function record(actor, action, entity, entityId, before, after, ip) {
+  await insert.run(
     actor?.id ?? null,
     actor?.name ?? 'system',
     action,
@@ -41,7 +41,7 @@ const forRequest = (req) => (action, entity, entityId, before, after) =>
   record(req.user, action, entity, entityId, before, after, req.ip);
 
 /** Read the trail back, newest first. */
-function list({ entity, entityId, userId, limit = 100, offset = 0 } = {}) {
+async function list({ entity, entityId, userId, limit = 100, offset = 0 } = {}) {
   const where = [];
   const params = [];
   if (entity) { where.push('entity = ?'); params.push(entity); }
@@ -57,7 +57,7 @@ function list({ entity, entityId, userId, limit = 100, offset = 0 } = {}) {
   return db.prepare(sql).all(...params, limit, offset);
 }
 
-function count({ entity, entityId, userId } = {}) {
+async function count({ entity, entityId, userId } = {}) {
   const where = [];
   const params = [];
   if (entity) { where.push('entity = ?'); params.push(entity); }
@@ -65,7 +65,8 @@ function count({ entity, entityId, userId } = {}) {
   if (userId) { where.push('user_id = ?'); params.push(userId); }
   const sql = `SELECT COUNT(*) AS n FROM audit_log
                ${where.length ? 'WHERE ' + where.join(' AND ') : ''}`;
-  return db.prepare(sql).get(...params).n;
+  const row = await db.prepare(sql).get(...params);
+  return row.n;
 }
 
 module.exports = { record, forRequest, list, count };

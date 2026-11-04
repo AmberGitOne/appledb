@@ -114,29 +114,29 @@ const { DEMO_PASSWORD: DEFAULT_PASSWORD } = require('../lib/demo');
 
 // ---------------------------------------------------------------------
 
-function seed() {
+async function seed() {
   console.log('Seeding...');
 
-  db.pragma('foreign_keys = OFF');
+  await db.pragma('foreign_keys = OFF');
   for (const t of DATA_TABLES) {
-    try { db.prepare(`DELETE FROM ${t}`).run(); } catch (_) { /* table may not exist */ }
+    try { await db.prepare(`DELETE FROM ${t}`).run(); } catch (_) { /* table may not exist */ }
   }
-  db.prepare("DELETE FROM sqlite_sequence WHERE name NOT IN ('schema_migrations')").run();
-  db.pragma('foreign_keys = ON');
+  await db.prepare("DELETE FROM sqlite_sequence WHERE name NOT IN ('schema_migrations')").run();
+  await db.pragma('foreign_keys = ON');
 
   const counts = {};
   const bump = (k, n = 1) => { counts[k] = (counts[k] || 0) + n; };
 
   // ---- roles, permissions, users --------------------------------------
   const insRole = db.prepare('INSERT INTO roles (id,name,description) VALUES (?,?,?)');
-  for (const r of ROLES) { insRole.run(...r); bump('roles'); }
+  for (const r of ROLES) { await insRole.run(...r); bump('roles'); }
 
   const insPerm = db.prepare(
     'INSERT INTO permissions (id,resource,action,description) VALUES (?,?,?,?)'
   );
   for (const res of RESOURCES) {
     for (const act of ACTIONS) {
-      insPerm.run(`${res}:${act}`, res, act, `${act} ${res}`);
+      await insPerm.run(`${res}:${act}`, res, act, `${act} ${res}`);
       bump('permissions');
     }
   }
@@ -145,7 +145,7 @@ function seed() {
     'INSERT OR IGNORE INTO role_permissions (role_id,permission_id) VALUES (?,?)'
   );
   for (const [roleId] of ROLES) {
-    for (const perm of roleGrants(roleId)) { insRP.run(roleId, perm); bump('role_permissions'); }
+    for (const perm of roleGrants(roleId)) { await insRP.run(roleId, perm); bump('role_permissions'); }
   }
 
   const hash = bcrypt.hashSync(DEFAULT_PASSWORD, 10);
@@ -156,7 +156,7 @@ function seed() {
   for (const [id, email, name, role, desk, title, grade] of USERS) {
     const initials = name.replace(/[^A-Za-z ]/g, '').split(/\s+/)
       .map((w) => w[0]).join('').slice(0, 2).toUpperCase();
-    insUser.run(id, email, name, hash, role, desk, title, grade, initials);
+    await insUser.run(id, email, name, hash, role, desk, title, grade, initials);
     bump('users');
   }
 
@@ -165,54 +165,54 @@ function seed() {
   const insDesk = db.prepare(
     'INSERT INTO desks (id,name,colour,sla_target,position) VALUES (?,?,?,?,?)'
   );
-  deskNames.forEach((name, i) => {
+  for (const [i, name] of deskNames.entries()) {
     const id = 'desk-' + name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
-    insDesk.run(id, name, DESK_COLOURS[name] || '#6b7a90', (SEED.sla || {})[name] || '8 h', i);
+    await insDesk.run(id, name, DESK_COLOURS[name] || '#6b7a90', (SEED.sla || {})[name] || '8 h', i);
     bump('desks');
-  });
+  }
 
   // ---- settings -------------------------------------------------------
   const insSetting = db.prepare(
     'INSERT INTO settings (key,value,value_type) VALUES (?,?,?)'
   );
-  const setting = (key, value) => {
+  const setting = async (key, value) => {
     const type = typeof value === 'number' ? 'number'
       : typeof value === 'boolean' ? 'boolean'
       : typeof value === 'object' ? 'json' : 'string';
-    insSetting.run(key, JSON.stringify(value), type);
+    await insSetting.run(key, JSON.stringify(value), type);
     bump('settings');
   };
-  setting('stage', SEED.stage);
-  setting('currentTicket', SEED.cur);
-  setting('marginFloor', SEED.marginFloor);
-  setting('ccDecision', SEED.ccdecision);
-  setting('ccCapa', !!SEED.cccapa);
-  setting('warehousePhotos', SEED.whphotos);
-  setting('qaReleasedCount', SEED.qareleased);
-  setting('caseManager', SEED.casemgr);
-  setting('companyName', 'Apple Globalcare India Pvt Ltd');
-  setting('companyAddress', '4th floor, Prestige Tech Park, Bengaluru 560103');
-  setting('companyCIN', 'U51397KA2019PTC122104');
+  await setting('stage', SEED.stage);
+  await setting('currentTicket', SEED.cur);
+  await setting('marginFloor', SEED.marginFloor);
+  await setting('ccDecision', SEED.ccdecision);
+  await setting('ccCapa', !!SEED.cccapa);
+  await setting('warehousePhotos', SEED.whphotos);
+  await setting('qaReleasedCount', SEED.qareleased);
+  await setting('caseManager', SEED.casemgr);
+  await setting('companyName', 'Apple Globalcare India Pvt Ltd');
+  await setting('companyAddress', '4th floor, Prestige Tech Park, Bengaluru 560103');
+  await setting('companyCIN', 'U51397KA2019PTC122104');
 
   // ---- routing rules --------------------------------------------------
   const insRule = db.prepare(
     'INSERT INTO routing_rules (keywords,desk,position,active) VALUES (?,?,?,1)'
   );
-  (SEED.rules || []).forEach((r, i) => { insRule.run(r.kw, r.desk, i); bump('routing_rules'); });
+  for (const [i, r] of (SEED.rules || []).entries()) { await insRule.run(r.kw, r.desk, i); bump('routing_rules'); }
 
   // ---- labels ---------------------------------------------------------
   const insLabel = db.prepare('INSERT INTO labels (id,name,colour,position) VALUES (?,?,?,?)');
-  (SEED.labels || []).forEach((l, i) => { insLabel.run(l.id, l.name, l.c, i); bump('labels'); });
+  for (const [i, l] of (SEED.labels || []).entries()) { await insLabel.run(l.id, l.name, l.c, i); bump('labels'); }
 
   // ---- notifications --------------------------------------------------
   const insNote = db.prepare(
     `INSERT INTO notifications (id,title,detail,go_route,at_label,is_read,position)
      VALUES (?,?,?,?,?,?,?)`
   );
-  (SEED.notes || []).forEach((n, i) => {
-    insNote.run(n.id, n.t, str(n.d), str(n.go), str(n.at), bool(n.read), i);
+  for (const [i, n] of (SEED.notes || []).entries()) {
+    await insNote.run(n.id, n.t, str(n.d), str(n.go), str(n.at), bool(n.read), i);
     bump('notifications');
-  });
+  }
 
   // ---- suppliers and certificates -------------------------------------
   const insSup = db.prepare(
@@ -227,7 +227,7 @@ function seed() {
      VALUES (?,?,?,?,?,?,?)`
   );
   for (const s of SEED.suppliers || []) {
-    insSup.run(
+    await insSup.run(
       s.id, s.name, str(s.code), str(s.cat), str(s.country), str(s.city), str(s.reg),
       str(s.contact), str(s.email), str(s.phone), str(s.terms), str(s.cur) || 'USD',
       str(s.lead), str(s.status) || 'Under review', str(s.rating),
@@ -235,7 +235,7 @@ function seed() {
     );
     bump('suppliers');
     for (const c of s.certs || []) {
-      insCert.run(`${s.id}-${c.id}`, s.id, c.type, str(c.no), str(c.body), str(c.issued), str(c.exp));
+      await insCert.run(`${s.id}-${c.id}`, s.id, c.type, str(c.no), str(c.body), str(c.issued), str(c.exp));
       bump('supplier_certificates');
     }
   }
@@ -286,7 +286,7 @@ function seed() {
   for (const [id, patient] of casePatients) {
     const isMain = id === MAIN_CASE;
     const stage = isMain ? Math.min(Math.max(num(SEED.stage) || 1, 1), 10) : 1;
-    insCase.run(id, patient || 'Unknown', isMain ? str(SEED.casemgr) : '', stage, 'open');
+    await insCase.run(id, patient || 'Unknown', isMain ? str(SEED.casemgr) : '', stage, 'open');
     bump('cases');
   }
 
@@ -295,24 +295,24 @@ function seed() {
      VALUES (?,?,?,?,?,?,?,?)`
   );
   const TIMELINE_KINDS = new Set(['ticket', 'quote', 'order', 'payment', 'note', 'doc']);
-  (SEED.caselog || []).forEach((l, i) => {
-    insTimeline.run(
+  for (const [i, l] of (SEED.caselog || []).entries()) {
+    await insTimeline.run(
       MAIN_CASE,
       TIMELINE_KINDS.has(l.k) ? l.k : 'note',
       l.t, str(l.d), str(l.tag), str(l.c) || '#8b98ab', str(l.at), i
     );
     bump('case_timeline');
-  });
+  }
 
   const insCaseDoc = db.prepare(
     `INSERT INTO case_documents (case_id,name,doc_type,size_label,uploaded_by,position)
      VALUES (?,?,?,?,?,?)`
   );
-  (SEED.casedocs || []).forEach((d, i) => {
-    insCaseDoc.run(MAIN_CASE, d.name || d.n || 'document', str(d.type || 'PDF'),
+  for (const [i, d] of (SEED.casedocs || []).entries()) {
+    await insCaseDoc.run(MAIN_CASE, d.name || d.n || 'document', str(d.type || 'PDF'),
       str(d.size), str(d.by), i);
     bump('case_documents');
-  });
+  }
 
   // ---- tickets, threads, attachments ----------------------------------
   // Tickets carry no case id in the prototype; link them by patient name so
@@ -361,9 +361,9 @@ function seed() {
     return candidate;
   };
 
-  (SEED.tickets || []).forEach((t, ti) => {
+  for (const [ti, t] of (SEED.tickets || []).entries()) {
     t.id = uniqueTicketId(t.id);
-    insTicket.run(
+    await insTicket.run(
       t.id,
       caseByPatient.get(String(t.from || '').toLowerCase()) || null,
       str(t.from), str(t.who), str(t.subj), str(t.prev), str(t.chan) || 'Email',
@@ -378,11 +378,11 @@ function seed() {
     bump('tickets');
 
     for (const lid of t.labels || []) {
-      if (labelIds.has(lid)) { insTL.run(t.id, lid); bump('ticket_labels'); }
+      if (labelIds.has(lid)) { await insTL.run(t.id, lid); bump('ticket_labels'); }
     }
 
-    (t.thread || []).forEach((m, mi) => {
-      const r = insMsg.run(
+    for (const [mi, m] of (t.thread || []).entries()) {
+      const r = await insMsg.run(
         t.id, mi, str(m.who),
         DIRECTIONS.has(m.side) ? m.side : 'in',
         str(m.chan), str(m.at), str(m.txt)
@@ -392,11 +392,11 @@ function seed() {
         // "Rx-cycles-4-5.pdf · 240 KB"
         const [fname, size] = String(a).split('·').map((x) => x.trim());
         const ext = (fname.split('.').pop() || 'file').toUpperCase();
-        insAtt.run(r.lastInsertRowid, t.id, fname, ext, size || '');
+        await insAtt.run(r.lastInsertRowid, t.id, fname, ext, size || '');
         bump('attachments');
       }
-    });
-  });
+    }
+  }
 
   if (remapped.length) {
     console.log(`  note: ${remapped.length} duplicate ticket ids in the source data were reissued:`);
@@ -407,16 +407,16 @@ function seed() {
   const insActivity = db.prepare(
     'INSERT INTO activity_log (stream,ref_id,title,actor,at_label,position) VALUES (?,?,?,?,?,?)'
   );
-  const activity = (stream, refId, rows) => {
-    (rows || []).forEach((l, i) => {
-      insActivity.run(stream, str(refId), l.t, str(l.by), str(l.at), i);
+  const activity = async (stream, refId, rows) => {
+    for (const [i, l] of (rows || []).entries()) {
+      await insActivity.run(stream, str(refId), l.t, str(l.by), str(l.at), i);
       bump('activity_log');
-    });
+    }
   };
 
   if (SEED.rfq) {
     const r = SEED.rfq;
-    db.prepare(
+    await db.prepare(
       `INSERT INTO rfqs (id,case_id,drug,spec,quantity,needed_by,destination,storage,sent_at,status)
        VALUES (?,?,?,?,?,?,?,?,?,?)`
     ).run(
@@ -431,8 +431,8 @@ function seed() {
           landed_cost,lead_days,rating,flag,note,state,selected)
        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
     );
-    (r.lines || []).forEach((l, i) => {
-      insLine.run(
+    for (const [i, l] of (r.lines || []).entries()) {
+      await insLine.run(
         r.id, i, l.country, str(l.partner), matchSupplier(l.partner), str(l.maker),
         str(l.pack), str(l.batch), str(l.exp), str(l.avail), num(l.landed),
         str(l.lead), str(l.rating), str(l.flag), str(l.note),
@@ -440,15 +440,15 @@ function seed() {
         bool(l.sel)
       );
       bump('rfq_lines');
-    });
-    activity('rfq', r.id, r.log);
+    }
+    await activity('rfq', r.id, r.log);
   }
 
   // ---- quote ----------------------------------------------------------
   if (SEED.quote) {
     const q = SEED.quote;
     const VALID_QSTATUS = new Set(['draft', 'sent', 'accepted', 'declined', 'expired']);
-    db.prepare(
+    await db.prepare(
       `INSERT INTO quotes (id,case_id,rfq_id,patient,drug,status,accepted_option)
        VALUES (?,?,?,?,?,?,?)`
     ).run(
@@ -465,12 +465,12 @@ function seed() {
          (quote_id,opt_key,name,note,origin,lead_days,landed_cost,service_fee,visible,is_default,position)
        VALUES (?,?,?,?,?,?,?,?,?,?,?)`
     );
-    (q.opts || []).forEach((o, i) => {
-      insOpt.run(q.id, o.k, str(o.name), str(o.note), str(o.origin), str(o.lead),
+    for (const [i, o] of (q.opts || []).entries()) {
+      await insOpt.run(q.id, o.k, str(o.name), str(o.note), str(o.origin), str(o.lead),
         num(o.landed), num(o.fee), bool(o.show), bool(o.def), i);
       bump('quote_options');
-    });
-    activity('quote', q.id, q.log);
+    }
+    await activity('quote', q.id, q.log);
   }
 
   // ---- orders ---------------------------------------------------------
@@ -480,8 +480,8 @@ function seed() {
         due_label,left_label,hold_reason,note,cold_chain,at_risk,completed,completed_at,position)
      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
   );
-  (SEED.orders || []).forEach((o, i) => {
-    insOrder.run(
+  for (const [i, o] of (SEED.orders || []).entries()) {
+    await insOrder.run(
       o.id, casePatients.has(o.case) ? o.case : null,
       SEED.quote && o.case === SEED.quote.case ? SEED.quote.id : null,
       str(o.who), str(o.drug), str(o.country), str(o.owner), num(o.stage),
@@ -489,18 +489,18 @@ function seed() {
       bool(o.cold), bool(o.risk), 0, '', i
     );
     bump('orders');
-  });
-  (SEED.orddone || []).forEach((o, i) => {
-    insOrder.run(
+  }
+  for (const [i, o] of (SEED.orddone || []).entries()) {
+    await insOrder.run(
       o.id, null, null, str(o.who), str(o.drug), '', '', 10,
       '', '', '', '', '', '', 0, 0, 1, str(o.at), 1000 + i
     );
     bump('orders');
-  });
-  activity('orders', '', SEED.ordlog);
+  }
+  await activity('orders', '', SEED.ordlog);
 
   // ---- warehouse wave -------------------------------------------------
-  const orderIds = new Set(db.prepare('SELECT id FROM orders').all().map((r) => r.id));
+  const orderIds = new Set((await db.prepare('SELECT id FROM orders').all()).map((r) => r.id));
   const insWave = db.prepare(
     `INSERT INTO wave_lines
        (id,order_id,patient,drug,batch,expiry,location,quantity,fefo,state,
@@ -508,8 +508,8 @@ function seed() {
      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
   );
   const VALID_WAVE = new Set(['queued', 'picking', 'picked', 'packed', 'held', 'qa', 'shipped']);
-  (SEED.wave || []).forEach((w, i) => {
-    insWave.run(
+  for (const [i, w] of (SEED.wave || []).entries()) {
+    await insWave.run(
       w.id, orderIds.has(w.id) ? w.id : null, str(w.who), str(w.drug), str(w.batch),
       str(w.exp), str(w.loc), str(w.qty),
       w.fefo === 'Breach' ? 'Breach' : 'OK',
@@ -518,7 +518,7 @@ function seed() {
       str(w.alt?.batch), str(w.alt?.exp), str(w.alt?.loc), i
     );
     bump('wave_lines');
-  });
+  }
 
   // ---- QA -------------------------------------------------------------
   const insQA = db.prepare(
@@ -531,8 +531,8 @@ function seed() {
     'INSERT INTO qa_checks (batch_id,position,done,label,detail) VALUES (?,?,?,?,?)'
   );
   const VALID_QA = new Set(['review', 'ready', 'quarantine', 'released', 'rejected']);
-  (SEED.qa || []).forEach((q, i) => {
-    insQA.run(
+  for (const [i, q] of (SEED.qa || []).entries()) {
+    await insQA.run(
       q.id, q.prod, str(q.batch), str(q.sup), matchSupplier(q.sup), str(q.exp),
       str(q.temp), bool(q.tempok), str(q.handling), str(q.forwhom), str(q.recv),
       str(q.signer), str(q.waiting),
@@ -540,11 +540,11 @@ function seed() {
       bool(q.mine), str(q.quarWhy), i
     );
     bump('qa_batches');
-    (q.checks || []).forEach((c, ci) => {
-      insQACheck.run(q.id, ci, bool(c[0]), str(c[1]), str(c[2]));
+    for (const [ci, c] of (q.checks || []).entries()) {
+      await insQACheck.run(q.id, ci, bool(c[0]), str(c[1]), str(c[2]));
       bump('qa_checks');
-    });
-  });
+    }
+  }
 
   const insDev = db.prepare(
     'INSERT INTO qa_deviations (id,batch,batch_id,what,severity,state) VALUES (?,?,?,?,?,?)'
@@ -552,11 +552,11 @@ function seed() {
   const qaByBatch = new Map((SEED.qa || []).map((q) => [q.batch, q.id]));
   const VALID_SEV = new Set(['Minor', 'Major', 'Critical']);
   for (const d of SEED.qadev || []) {
-    insDev.run(d.id, str(d.batch), qaByBatch.get(d.batch) || null, str(d.what),
+    await insDev.run(d.id, str(d.batch), qaByBatch.get(d.batch) || null, str(d.what),
       VALID_SEV.has(d.sev) ? d.sev : 'Minor', str(d.state) || 'open');
     bump('qa_deviations');
   }
-  activity('qa', '', SEED.qalog);
+  await activity('qa', '', SEED.qalog);
 
   // ---- prescriptions --------------------------------------------------
   const insRx = db.prepare(
@@ -570,8 +570,8 @@ function seed() {
     'INSERT INTO rx_checks (rx_id,position,done,label,detail) VALUES (?,?,?,?,?)'
   );
   const VALID_RX = new Set(['queue', 'waiting', 'query', 'verified', 'released', 'rejected']);
-  (SEED.rx || []).forEach((r, i) => {
-    insRx.run(
+  for (const [i, r] of (SEED.rx || []).entries()) {
+    await insRx.run(
       r.id, casePatients.has(r.case) ? r.case : null, r.pat, str(r.dob), str(r.mrn),
       str(r.country), str(r.drug), str(r.dose), str(r.diag), str(r.hosp), str(r.dept),
       str(r.presc), str(r.reg), str(r.dated), str(r.got), str(r.tag), str(r.tagc),
@@ -580,22 +580,22 @@ function seed() {
       bool(r.sla), bool(r.mine), i
     );
     bump('prescriptions');
-    (r.checks || []).forEach((c, ci) => {
-      insRxCheck.run(r.id, ci, bool(c[0]), str(c[1]), str(c[2]));
+    for (const [ci, c] of (r.checks || []).entries()) {
+      await insRxCheck.run(r.id, ci, bool(c[0]), str(c[1]), str(c[2]));
       bump('rx_checks');
-    });
-  });
+    }
+  }
 
   const rxIds = new Set((SEED.rx || []).map((r) => r.id));
   const insRxQ = db.prepare(
     'INSERT INTO rx_queries (id,rx_id,patient,question,sent_at,state,answer,position) VALUES (?,?,?,?,?,?,?,?)'
   );
-  (SEED.rxq || []).forEach((q, i) => {
-    insRxQ.run(q.id, rxIds.has(q.rx) ? q.rx : null, str(q.pat), str(q.q), str(q.sent),
+  for (const [i, q] of (SEED.rxq || []).entries()) {
+    await insRxQ.run(q.id, rxIds.has(q.rx) ? q.rx : null, str(q.pat), str(q.q), str(q.sent),
       str(q.state) || 'waiting', str(q.ans), i);
     bump('rx_queries');
-  });
-  activity('rx', '', SEED.rxlog);
+  }
+  await activity('rx', '', SEED.rxlog);
 
   // ---- employees, benefits, leave, holidays ---------------------------
   const insBenefit = db.prepare('INSERT INTO benefits (id,name) VALUES (?,?)');
@@ -604,12 +604,12 @@ function seed() {
     ...(SEED.employees || []).flatMap((e) => e.ben || []),
   ])];
   const benefitId = new Map();
-  allBenefits.forEach((name, i) => {
+  for (const [i, name] of allBenefits.entries()) {
     const id = 'ben-' + name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
     benefitId.set(name, id);
-    insBenefit.run(id, name);
+    await insBenefit.run(id, name);
     bump('benefits');
-  });
+  }
 
   const userByName = new Map(USERS.map((u) => [u[2], u[0]]));
   const insEmp = db.prepare(
@@ -620,15 +620,15 @@ function seed() {
   const insEB = db.prepare(
     'INSERT OR IGNORE INTO employee_benefits (employee_id,benefit_id) VALUES (?,?)'
   );
-  (SEED.employees || []).forEach((e, i) => {
-    insEmp.run(e.id, e.name, str(e.dept), str(e.doa), str(e.sal), str(e.leave),
+  for (const [i, e] of (SEED.employees || []).entries()) {
+    await insEmp.run(e.id, e.name, str(e.dept), str(e.doa), str(e.sal), str(e.leave),
       str(e.status) || 'Active', str(e.docs), userByName.get(e.name) || null, i);
     bump('employees');
     for (const b of e.ben || []) {
-      if (benefitId.has(b)) { insEB.run(e.id, benefitId.get(b)); bump('employee_benefits'); }
+      if (benefitId.has(b)) { await insEB.run(e.id, benefitId.get(b)); bump('employee_benefits'); }
     }
-  });
-  activity('employees', '', SEED.emplog);
+  }
+  await activity('employees', '', SEED.emplog);
 
   const empByName = new Map((SEED.employees || []).map((e) => [e.name, e.id]));
   const insLeave = db.prepare(
@@ -638,35 +638,35 @@ function seed() {
      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
   );
   const VALID_LEAVE = new Set(['waiting', 'approved', 'rejected', 'cancelled', 'recorded', 'lop']);
-  (SEED.leave || []).forEach((l, i) => {
-    insLeave.run(
+  for (const [i, l] of (SEED.leave || []).entries()) {
+    await insLeave.run(
       l.id, empByName.get(l.who) || null, l.who, str(l.dept), str(l.type),
       str(l.from), str(l.to), str(l.days), str(l.reason), str(l.cover),
       VALID_LEAVE.has(l.status) ? l.status : 'waiting',
       bool(l.mine), bool(l.clash), i
     );
     bump('leave_requests');
-  });
+  }
 
   const insHol = db.prepare(
     'INSERT INTO holidays (id,holiday_date,name,offices,holiday_type,added_by,position) VALUES (?,?,?,?,?,?,?)'
   );
-  (SEED.holidays || []).forEach((h, i) => {
-    insHol.run(h.id, h.d, h.n, str(h.o), str(h.t) || 'Company-wide', str(h.a), i);
+  for (const [i, h] of (SEED.holidays || []).entries()) {
+    await insHol.run(h.id, h.d, h.n, str(h.o), str(h.t) || 'Company-wide', str(h.a), i);
     bump('holidays');
-  });
+  }
 
   const insHolReq = db.prepare(
     'INSERT INTO holiday_requests (id,action,requested_by,requested_at,payload,state) VALUES (?,?,?,?,?,?)'
   );
-  (SEED.holreq || []).forEach((r) => {
-    insHolReq.run(r.rid, ['add', 'edit', 'remove'].includes(r.action) ? r.action : 'add',
+  for (const r of (SEED.holreq || [])) {
+    await insHolReq.run(r.rid, ['add', 'edit', 'remove'].includes(r.action) ? r.action : 'add',
       str(r.by), str(r.at), JSON.stringify(r.h || {}), 'waiting');
     bump('holiday_requests');
-  });
+  }
 
   // ---- audit marker ---------------------------------------------------
-  db.prepare(
+  await db.prepare(
     `INSERT INTO audit_log (user_id,user_name,action,entity,entity_id,after_json)
      VALUES (?,?,?,?,?,?)`
   ).run(null, 'system', 'reset', 'database', '',
@@ -685,14 +685,15 @@ function seed() {
 }
 
 if (require.main === module) {
-  const run = db.transaction(seed);
-  try {
-    run();
-  } catch (err) {
-    console.error('Seed failed:', err.message);
-    if (err.stack) console.error(err.stack.split('\n').slice(1, 4).join('\n'));
-    process.exit(1);
-  }
+  const { configure } = require('./index');
+  configure()
+    .then(() => db.transaction(seed)())
+    .then(() => db.close())
+    .catch((err) => {
+      console.error('Seed failed:', err.message);
+      if (err.stack) console.error(err.stack.split(String.fromCharCode(10)).slice(1, 4).join(String.fromCharCode(10)));
+      process.exit(1);
+    });
 }
 
 module.exports = { seed, DEFAULT_PASSWORD };

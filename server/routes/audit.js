@@ -8,19 +8,20 @@ const { requires } = require('../middleware/auth');
 
 const router = express.Router();
 
-router.get('/', requires('audit:read'), wrap((req, res) => {
+router.get('/', requires('audit:read'), wrap(async (req, res) => {
   const { limit, offset, page } = pagination(req.query, 100);
   const filter = {
     entity: req.query.entity,
     entityId: req.query.entityId,
     userId: req.query.userId,
   };
-  const rows = auditLog.list({ ...filter, limit, offset }).map((r) => ({
+  const found = await auditLog.list({ ...filter, limit, offset });
+  const rows = found.map((r) => ({
     ...r,
     before: safeParse(r.before_json),
     after: safeParse(r.after_json),
   }));
-  const total = auditLog.count(filter);
+  const total = await auditLog.count(filter);
   res.json({
     data: rows,
     meta: { total, page, limit, pages: Math.max(1, Math.ceil(total / limit)) },

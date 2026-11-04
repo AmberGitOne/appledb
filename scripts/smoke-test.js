@@ -100,7 +100,7 @@ async function main() {
   });
   check('POST creates a supplier', created.status === 201);
   check('created row is in the database',
-    !!one('SELECT 1 FROM suppliers WHERE id = ?', 'SUP-TEST'));
+    !!(await one('SELECT 1 FROM suppliers WHERE id = ?', 'SUP-TEST')));
 
   const dupe = await api('POST', '/api/suppliers', { id: 'SUP-TEST', name: 'Again' });
   check('duplicate primary key returns 409', dupe.status === 409, `got ${dupe.status}`);
@@ -111,23 +111,23 @@ async function main() {
   const patched = await api('PATCH', '/api/suppliers/SUP-TEST', { status: 'On hold', city: 'Cork' });
   check('PATCH updates only what changed', patched.status === 200 && patched.body.changed === true);
   check('update is visible in the database',
-    one('SELECT status FROM suppliers WHERE id = ?', 'SUP-TEST')?.status === 'On hold');
+    (await one('SELECT status FROM suppliers WHERE id = ?', 'SUP-TEST'))?.status === 'On hold');
 
   const noop = await api('PATCH', '/api/suppliers/SUP-TEST', { status: 'On hold' });
   check('a no-op PATCH reports changed:false', noop.body?.changed === false);
 
-  const auditRow = one(
+  const auditRow = (await one(
     `SELECT action, before_json, after_json FROM audit_log
      WHERE entity = 'suppliers' AND entity_id = 'SUP-TEST' AND action = 'update'
      ORDER BY id DESC LIMIT 1`
-  );
+  ));
   check('the update wrote an audit row with before/after',
     !!auditRow && JSON.parse(auditRow.after_json).status === 'On hold');
 
   const removed = await api('DELETE', '/api/suppliers/SUP-TEST');
   check('DELETE removes the row', removed.status === 200);
   check('row is gone from the database',
-    !one('SELECT 1 FROM suppliers WHERE id = ?', 'SUP-TEST'));
+    !(await one('SELECT 1 FROM suppliers WHERE id = ?', 'SUP-TEST')));
 
   const missing = await api('GET', '/api/suppliers/SUP-TEST');
   check('missing record returns 404', missing.status === 404);
@@ -165,17 +165,17 @@ async function main() {
       (t) => ['tickets', 'qa_batches', 'holidays'].includes(t)),
     JSON.stringify(Object.keys(saved.body?.tables || {})));
 
-  check('new ticket row exists', !!one('SELECT 1 FROM tickets WHERE id = ?', 'TK-SMOKE'));
+  check('new ticket row exists', !!(await one('SELECT 1 FROM tickets WHERE id = ?', 'TK-SMOKE')));
   check('its thread row exists',
-    one('SELECT COUNT(*) n FROM ticket_messages WHERE ticket_id = ?', 'TK-SMOKE').n === 1);
+    (await one('SELECT COUNT(*) n FROM ticket_messages WHERE ticket_id = ?', 'TK-SMOKE')).n === 1);
   check('priority change persisted',
-    one('SELECT priority FROM tickets WHERE id = ?', targetTicket)?.priority === 'Urgent');
+    (await one('SELECT priority FROM tickets WHERE id = ?', targetTicket))?.priority === 'Urgent');
   check('appended thread message persisted',
-    many('SELECT body FROM ticket_messages WHERE ticket_id = ? ORDER BY position', targetTicket)
+    (await many('SELECT body FROM ticket_messages WHERE ticket_id = ? ORDER BY position', targetTicket))
       .some((m) => m.body === 'written by the smoke test'));
   check('qa status persisted',
-    one('SELECT status FROM qa_batches ORDER BY position LIMIT 1')?.status === 'released');
-  check('new holiday persisted', !!one('SELECT 1 FROM holidays WHERE id = ?', 'H-SMOKE'));
+    (await one('SELECT status FROM qa_batches ORDER BY position LIMIT 1'))?.status === 'released');
+  check('new holiday persisted', !!(await one('SELECT 1 FROM holidays WHERE id = ?', 'H-SMOKE')));
 
   // deletes propagate too
   const pruned = JSON.parse(JSON.stringify(mutated));
@@ -184,15 +184,15 @@ async function main() {
   const afterDelete = await api('PUT', '/api/state', pruned);
   check('removing items from state deletes the rows',
     afterDelete.status === 200 &&
-    !one('SELECT 1 FROM tickets WHERE id = ?', 'TK-SMOKE') &&
-    !one('SELECT 1 FROM holidays WHERE id = ?', 'H-SMOKE'));
+    !(await one('SELECT 1 FROM tickets WHERE id = ?', 'TK-SMOKE')) &&
+    !(await one('SELECT 1 FROM holidays WHERE id = ?', 'H-SMOKE')));
   check('cascade removed the orphaned thread',
-    one('SELECT COUNT(*) n FROM ticket_messages WHERE ticket_id = ?', 'TK-SMOKE').n === 0);
+    (await one('SELECT COUNT(*) n FROM ticket_messages WHERE ticket_id = ?', 'TK-SMOKE')).n === 0);
 
   // ---- integrity --------------------------------------------------------
   console.log('\n-- integrity --');
-  check('no foreign key violations', db.pragma('foreign_key_check').length === 0);
-  const ic = db.pragma('integrity_check');
+  check('no foreign key violations', (await db.pragma('foreign_key_check')).length === 0);
+  const ic = await db.pragma('integrity_check');
   check('sqlite integrity_check is ok', ic[0]?.integrity_check === 'ok');
 
   // ---- auth ------------------------------------------------------------
@@ -209,7 +209,7 @@ async function main() {
   check('login response carries role permissions',
     Array.isArray(goodLogin.body?.user?.permissions) && goodLogin.body.user.permissions.length > 0);
   check('login was audited',
-    !!one("SELECT 1 FROM audit_log WHERE action = 'login' ORDER BY id DESC LIMIT 1"));
+    !!(await one("SELECT 1 FROM audit_log WHERE action = 'login' ORDER BY id DESC LIMIT 1")));
 
   const roles = await api('GET', '/api/auth/roles');
   check('roles endpoint lists permissions',
@@ -241,8 +241,8 @@ async function main() {
   const reset = await api('POST', '/api/state/reset');
   check('reset re-seeds the database', reset.status === 200);
   check('ticket count is back to 41',
-    one('SELECT COUNT(*) n FROM tickets').n === 41,
-    String(one('SELECT COUNT(*) n FROM tickets').n));
+    (await one('SELECT COUNT(*) n FROM tickets')).n === 41,
+    String((await one('SELECT COUNT(*) n FROM tickets')).n));
 
   // ---- report -----------------------------------------------------------
   console.log(`\n${passed} passed, ${failed} failed\n`);

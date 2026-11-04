@@ -18,31 +18,33 @@
  * a redeploy from wiping a live system.
  */
 
-const { db, tableExists, DB_FILE } = require('./index');
+const { db, configure, tableExists, DB_DESCRIPTION } = require('./index');
 
-function hasRows(table) {
-  if (!tableExists(table)) return false;
-  return db.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get().n > 0;
+async function hasRows(table) {
+  if (!(await tableExists(table))) return false;
+  const row = await db.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get();
+  return row.n > 0;
 }
 
-function main() {
-  console.log(`  database: ${DB_FILE}`);
+async function main() {
+  await configure();
+  console.log(`  database: ${DB_DESCRIPTION}`);
 
-  if (!tableExists('tickets') || !tableExists('users')) {
+  if (!(await tableExists('tickets')) || !(await tableExists('users'))) {
     console.log('  no schema found - creating it');
-    require('./migrate').run();
+    await require('./migrate').run();
   } else {
     // Keeps an existing deployment current when schema.sql moves forward.
     try {
-      require('./migrate').run();
+      await require('./migrate').run();
     } catch (err) {
       console.error('  migration failed:', err.message);
       process.exit(1);
     }
   }
 
-  if (hasRows('users')) {
-    const counts = db.prepare(`
+  if (await hasRows('users')) {
+    const counts = await db.prepare(`
       SELECT (SELECT COUNT(*) FROM users)   AS users,
              (SELECT COUNT(*) FROM tickets) AS tickets,
              (SELECT COUNT(*) FROM orders)  AS orders
@@ -56,16 +58,16 @@ function main() {
 
   console.log('  database has no users - loading the demo dataset');
   const { seed } = require('./seed');
-  db.transaction(seed)();
+  await db.transaction(seed)();
 }
 
 if (require.main === module) {
-  try {
-    main();
-  } catch (err) {
-    console.error('Bootstrap failed:', err.message);
-    process.exit(1);
-  }
+  main()
+    .then(() => db.close())
+    .catch((err) => {
+      console.error('Bootstrap failed:', err.message);
+      process.exit(1);
+    });
 }
 
 module.exports = { main };

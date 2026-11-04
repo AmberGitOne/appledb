@@ -13,8 +13,8 @@ const router = express.Router();
 const read = requires('tickets:read');
 
 /** Headline numbers for the Command Centre. */
-router.get('/summary', read, wrap((req, res) => {
-  const row = db.prepare(`
+router.get('/summary', read, wrap(async (req, res) => {
+  const row = await db.prepare(`
     SELECT
       (SELECT COUNT(*) FROM tickets WHERE folder = 'inbox')                      AS open_tickets,
       (SELECT COUNT(*) FROM tickets WHERE folder = 'inbox' AND unread = 1)       AS unread_tickets,
@@ -40,12 +40,12 @@ router.get('/summary', read, wrap((req, res) => {
 }));
 
 /** Workload per desk, straight from the view. */
-router.get('/desks', read, wrap((req, res) => {
-  res.json({ data: db.prepare('SELECT * FROM v_desk_workload ORDER BY open_tickets DESC').all() });
+router.get('/desks', read, wrap(async (req, res) => {
+  res.json({ data: await db.prepare('SELECT * FROM v_desk_workload ORDER BY open_tickets DESC').all() });
 }));
 
 /** Ticket counts grouped by any allowed dimension. */
-router.get('/tickets-by/:dimension', read, wrap((req, res) => {
+router.get('/tickets-by/:dimension', read, wrap(async (req, res) => {
   const ALLOWED = { channel: 'channel', desk: 'desk', priority: 'priority', folder: 'folder', status: 'status' };
   const col = ALLOWED[req.params.dimension];
   if (!col) {
@@ -53,7 +53,7 @@ router.get('/tickets-by/:dimension', read, wrap((req, res) => {
       error: `dimension must be one of: ${Object.keys(ALLOWED).join(', ')}`,
     });
   }
-  const rows = db.prepare(`
+  const rows = await db.prepare(`
     SELECT ${col} AS key, COUNT(*) AS total,
            SUM(unread) AS unread, SUM(breached) AS breached
     FROM tickets WHERE folder = 'inbox'
@@ -63,29 +63,29 @@ router.get('/tickets-by/:dimension', read, wrap((req, res) => {
 }));
 
 /** Order pipeline by stage. */
-router.get('/pipeline', read, wrap((req, res) => {
-  res.json({ data: db.prepare('SELECT * FROM v_order_pipeline ORDER BY stage').all() });
+router.get('/pipeline', read, wrap(async (req, res) => {
+  res.json({ data: await db.prepare('SELECT * FROM v_order_pipeline ORDER BY stage').all() });
 }));
 
 /** Case overview with its related record counts. */
-router.get('/cases', read, wrap((req, res) => {
+router.get('/cases', read, wrap(async (req, res) => {
   res.json({
-    data: db.prepare('SELECT * FROM v_case_overview ORDER BY ticket_count DESC, id').all(),
+    data: await db.prepare('SELECT * FROM v_case_overview ORDER BY ticket_count DESC, id').all(),
   });
 }));
 
 /** Supplier certificates, nearest expiry first - the compliance watch list. */
-router.get('/expiring-certificates', read, wrap((req, res) => {
+router.get('/expiring-certificates', read, wrap(async (req, res) => {
   res.json({
-    data: db.prepare(
+    data: await db.prepare(
       'SELECT * FROM v_expiring_certificates ORDER BY expires_on LIMIT ?'
     ).all(Number(req.query.limit) || 25),
   });
 }));
 
 /** QA release progress: how far through its checks each batch is. */
-router.get('/qa-progress', read, wrap((req, res) => {
-  const rows = db.prepare(`
+router.get('/qa-progress', read, wrap(async (req, res) => {
+  const rows = await db.prepare(`
     SELECT b.id, b.product, b.batch, b.status, b.supplier,
            COUNT(c.id)                 AS checks_total,
            COALESCE(SUM(c.done), 0)    AS checks_done,
@@ -100,8 +100,8 @@ router.get('/qa-progress', read, wrap((req, res) => {
 }));
 
 /** Leave taken per department. */
-router.get('/leave-by-department', read, wrap((req, res) => {
-  const rows = db.prepare(`
+router.get('/leave-by-department', read, wrap(async (req, res) => {
+  const rows = await db.prepare(`
     SELECT department,
            COUNT(*) AS requests,
            SUM(CASE WHEN status = 'waiting'  THEN 1 ELSE 0 END) AS waiting,
@@ -113,8 +113,8 @@ router.get('/leave-by-department', read, wrap((req, res) => {
 }));
 
 /** Sourcing spread for an RFQ: who answered, at what landed cost. */
-router.get('/sourcing/:rfqId', read, wrap((req, res) => {
-  const rows = db.prepare(`
+router.get('/sourcing/:rfqId', read, wrap(async (req, res) => {
+  const rows = await db.prepare(`
     SELECT l.country, l.partner, l.state, l.landed_cost, l.lead_days, l.flag,
            s.status AS supplier_status, s.rating AS supplier_rating
     FROM rfq_lines l

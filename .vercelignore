@@ -1,0 +1,17 @@
+# The database never ships: on Vercel the filesystem is read-only and the
+# data lives in Turso. Locally this file can be hundreds of megabytes.
+data/
+*.db
+*.db-shm
+*.db-wal
+
+node_modules/
+.env
+.env.*
+!.env.example
+
+# Deployment configuration for other hosts.
+Dockerfile
+docker-entrypoint.sh
+render.yaml
+run-crm.bat

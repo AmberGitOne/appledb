@@ -13,7 +13,8 @@ const cookieParser = require('cookie-parser');
 
 require('dotenv').config({ path: path.join(__dirname, '..', '.env') });
 
-const { db, DB_FILE, tableExists } = require('./db');
+const { db, configure, DB_DESCRIPTION, tableExists } = require('./db');
+const { warmup } = require('./lib/resource');
 const { authenticate, REQUIRE_AUTH } = require('./middleware/auth');
 const { HttpError } = require('./lib/http');
 
@@ -35,8 +36,9 @@ if (process.env.NODE_ENV !== 'test') {
 }
 
 // ---- health (no auth) -------------------------------------------------
-app.get('/api/health', (req, res) => {
-  const counts = db.prepare(`
+app.get('/api/health', async (req, res, next) => {
+  try {
+  const counts = await db.prepare(`
     SELECT (SELECT COUNT(*) FROM tickets)   AS tickets,
            (SELECT COUNT(*) FROM orders)    AS orders,
            (SELECT COUNT(*) FROM cases)     AS cases,
@@ -45,11 +47,12 @@ app.get('/api/health', (req, res) => {
   `).get();
   res.json({
     status: 'ok',
-    database: path.basename(DB_FILE),
+    database: DB_DESCRIPTION,
     requireAuth: REQUIRE_AUTH,
     counts,
     uptimeSeconds: Math.round(process.uptime()),
   });
+  } catch (err) { next(err); }
 });
 
 // ---- API --------------------------------------------------------------
@@ -85,24 +88,49 @@ app.use((err, req, res, _next) => {
   });
 });
 
+// ---- one-time async init ----------------------------------------------
+/**
+ * Connect, check the schema and resolve the resource column whitelists.
+ *
+ * Memoised, because on a serverless host every request may arrive at a warm
+ * instance that has already done this, and the ones that arrive during a
+ * cold start must all wait on the same promise rather than racing.
+ */
+let readyPromise = null;
+function ready() {
+  if (!readyPromise) {
+    readyPromise = (async () => {
+      await configure();
+      await warmup();
+    })();
+  }
+  return readyPromise;
+}
+
 // ---- start ------------------------------------------------------------
-function start() {
-  if (!tableExists('tickets')) {
+async function start() {
+  await configure();
+
+  if (!(await tableExists('tickets'))) {
     console.error('\n  The database has no schema yet. Run:\n');
     console.error('    npm run setup\n');
     process.exit(1);
   }
-  const ticketCount = db.prepare('SELECT COUNT(*) AS n FROM tickets').get().n;
+  const { n: ticketCount } = await db.prepare('SELECT COUNT(*) AS n FROM tickets').get();
   if (ticketCount === 0) {
     console.warn('  Warning: the database is empty. Run `npm run seed` to load the demo data.');
   }
+
+  // Resolve every resource's column whitelist now, so a bad table name is a
+  // startup failure rather than a surprise on the first request that hits it.
+  await ready();
 
   const server = app.listen(PORT, () => {
     console.log('');
     console.log('  Apple Globalcare CRM');
     console.log(`  app      http://localhost:${PORT}`);
     console.log(`  api      http://localhost:${PORT}/api/health`);
-    console.log(`  database ${DB_FILE}`);
+    console.log(`  database ${DB_DESCRIPTION}`);
     console.log(`  auth     ${REQUIRE_AUTH ? 'required' : 'open (set REQUIRE_AUTH=true to enforce)'}`);
     console.log('');
   });
@@ -116,6 +144,11 @@ function start() {
   process.on('SIGTERM', () => shutdown('SIGTERM'));
 }
 
-if (require.main === module) start();
+if (require.main === module) {
+  start().catch((err) => {
+    console.error('Failed to start:', err.message);
+    process.exit(1);
+  });
+}
 
-module.exports = { app, start };
+module.exports = { app, start, ready };

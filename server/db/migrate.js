@@ -13,13 +13,13 @@
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
-const { db, tableExists } = require('./index');
+const { db, configure, tableExists } = require('./index');
 
 const SCHEMA_FILE = path.join(__dirname, 'schema.sql');
 const FRESH = process.argv.includes('--fresh');
 
-function ensureMigrationsTable() {
-  db.exec(`
+async function ensureMigrationsTable() {
+  await db.exec(`
     CREATE TABLE IF NOT EXISTS schema_migrations (
       name       TEXT PRIMARY KEY,
       checksum   TEXT NOT NULL,
@@ -28,49 +28,51 @@ function ensureMigrationsTable() {
   `);
 }
 
-function dropEverything() {
-  db.pragma('foreign_keys = OFF');
+async function dropEverything() {
+  await db.pragma('foreign_keys = OFF');
 
-  const drop = (type, keyword) => {
-    const rows = db
+  const drop = async (type, keyword) => {
+    const rows = await db
       .prepare(
         `SELECT name FROM sqlite_master
          WHERE type = ? AND name NOT LIKE 'sqlite_%'`
       )
       .all(type);
     for (const { name } of rows) {
-      db.exec(`DROP ${keyword} IF EXISTS "${name}"`);
+      await db.exec(`DROP ${keyword} IF EXISTS "${name}"`);
     }
   };
 
   // Order matters: triggers and views reference tables.
-  drop('trigger', 'TRIGGER');
-  drop('view', 'VIEW');
-  drop('index', 'INDEX');
-  drop('table', 'TABLE');
+  await drop('trigger', 'TRIGGER');
+  await drop('view', 'VIEW');
+  await drop('index', 'INDEX');
+  await drop('table', 'TABLE');
 
-  db.pragma('foreign_keys = ON');
+  await db.pragma('foreign_keys = ON');
   console.log('  dropped all existing objects');
 }
 
-function run() {
+async function run() {
+  await configure();
+
   const sql = fs.readFileSync(SCHEMA_FILE, 'utf8');
   const checksum = crypto.createHash('sha256').update(sql).digest('hex').slice(0, 16);
 
   if (FRESH) {
     console.log('Migrating (fresh rebuild)...');
-    dropEverything();
+    await dropEverything();
   } else {
     console.log('Migrating...');
   }
 
-  ensureMigrationsTable();
+  await ensureMigrationsTable();
 
-  const already = db
+  const already = await db
     .prepare('SELECT checksum FROM schema_migrations WHERE name = ?')
     .get('schema.sql');
 
-  if (already && already.checksum === checksum && tableExists('tickets')) {
+  if (already && already.checksum === checksum && (await tableExists('tickets'))) {
     console.log('  schema.sql already applied (checksum ' + checksum + ') - nothing to do');
     console.log('  run with --fresh to rebuild from scratch');
     return;
@@ -86,21 +88,17 @@ function run() {
     return;
   }
 
-  // better-sqlite3 exec() runs the whole script; it is implicitly atomic
-  // per statement, so wrap it to get all-or-nothing.
-  db.exec('BEGIN');
-  try {
-    db.exec(sql);
-    db.prepare(
-      'INSERT OR REPLACE INTO schema_migrations (name, checksum) VALUES (?, ?)'
-    ).run('schema.sql', checksum);
-    db.exec('COMMIT');
-  } catch (err) {
-    db.exec('ROLLBACK');
-    throw err;
-  }
+  // The script is applied statement by statement rather than inside one
+  // transaction: it opens with a PRAGMA, which a transaction would ignore,
+  // and a remote database would reject the mixture anyway. The checksum row
+  // below is only written once the whole script succeeded, so a half-applied
+  // schema is never recorded as done - the next run simply tries again.
+  await db.exec(sql);
+  await db.prepare(
+    'INSERT OR REPLACE INTO schema_migrations (name, checksum) VALUES (?, ?)'
+  ).run('schema.sql', checksum);
 
-  const counts = db
+  const counts = await db
     .prepare(
       `SELECT
          (SELECT COUNT(*) FROM sqlite_master WHERE type='table'  AND name NOT LIKE 'sqlite_%') AS tables,
@@ -118,12 +116,12 @@ function run() {
 }
 
 if (require.main === module) {
-  try {
-    run();
-  } catch (err) {
-    console.error('Migration failed:', err.message);
-    process.exit(1);
-  }
+  run()
+    .then(() => db.close())
+    .catch((err) => {
+      console.error('Migration failed:', err.message);
+      process.exit(1);
+    });
 }
 
 module.exports = { run };

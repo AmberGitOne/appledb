@@ -35,22 +35,23 @@ function sign(user) {
   );
 }
 
-function permissionsFor(roleId) {
-  return selPerms.all(roleId).map((r) => r.permission_id);
+async function permissionsFor(roleId) {
+  const rows = await selPerms.all(roleId);
+  return rows.map((r) => r.permission_id);
 }
 
 /** The default identity used when auth is not enforced. */
-function fallbackUser() {
-  const row = db
+async function fallbackUser() {
+  const row = await db
     .prepare("SELECT id FROM users WHERE role_id = 'role-admin' ORDER BY id LIMIT 1")
     .get();
   return row ? hydrate(row.id) : null;
 }
 
-function hydrate(userId) {
-  const u = selUser.get(userId);
+async function hydrate(userId) {
+  const u = await selUser.get(userId);
   if (!u || !u.active) return null;
-  u.permissions = permissionsFor(u.role_id);
+  u.permissions = await permissionsFor(u.role_id);
   return u;
 }
 
@@ -75,14 +76,14 @@ const PUBLIC_PATHS = new Set(['/auth/login', '/auth/accounts', '/health']);
  * REQUIRE_AUTH is on - otherwise it falls back to the admin identity so the
  * UI keeps working and the audit trail still gets a name.
  */
-function authenticate(req, res, next) {
+async function authenticate(req, res, next) {
   const isPublic = PUBLIC_PATHS.has(req.path);
   const token = readToken(req);
 
   if (token) {
     try {
       const payload = jwt.verify(token, SECRET);
-      const user = hydrate(payload.sub);
+      const user = await hydrate(payload.sub);
       if (user) {
         req.user = user;
         return next();
@@ -100,8 +101,17 @@ function authenticate(req, res, next) {
 
   // Public routes carry no identity when auth is enforced; the login handler
   // does not need one, and audit records it as 'system'.
-  req.user = REQUIRE_AUTH ? null : fallbackUser();
+  req.user = REQUIRE_AUTH ? null : await fallbackUser();
   next();
+}
+
+/**
+ * Express 4 does not catch a rejected promise from middleware - it would
+ * hang the request instead of answering 500. This is the function actually
+ * mounted; authenticate() stays separate so it reads normally.
+ */
+function authenticateSafely(req, res, next) {
+  authenticate(req, res, next).catch(next);
 }
 
 /** Guard a route: requires(['tickets:update']) */
@@ -120,6 +130,6 @@ function requires(...needed) {
 }
 
 module.exports = {
-  authenticate, requires, sign, hydrate, permissionsFor,
+  authenticate: authenticateSafely, requires, sign, hydrate, permissionsFor,
   REQUIRE_AUTH, SECRET,
 };

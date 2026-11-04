@@ -20,10 +20,35 @@ const audit = require('./audit');
 const { wrap, badRequest, notFound, conflict, pagination } = require('./http');
 const { requires } = require('../middleware/auth');
 
-/** Columns that really exist on the table - the whitelist for identifiers. */
+/**
+ * Columns that really exist on the table - the whitelist for identifiers.
+ *
+ * Memoised, because it is read on every request now that it cannot be
+ * resolved while the router is being built.
+ */
+const columnCache = new Map();
+
 function columnsOf(table) {
-  return db.prepare(`PRAGMA table_info(${table})`).all().map((c) => c.name);
+  if (!columnCache.has(table)) {
+    columnCache.set(
+      table,
+      db.prepare(`PRAGMA table_info(${table})`).all().then((rows) => {
+        const names = rows.map((c) => c.name);
+        if (!names.length) throw new Error(`resource(): unknown table "${table}"`);
+        return names;
+      })
+    );
+  }
+  return columnCache.get(table);
 }
+
+/**
+ * Every resource's column lookup, so the server can resolve them all at
+ * startup. Without this a mistyped table name would only surface on the
+ * first request that touched it, rather than on boot as it used to.
+ */
+const warmers = [];
+const warmup = () => Promise.all(warmers.map((fn) => fn()));
 
 /**
  * @param {object} cfg
@@ -48,17 +73,26 @@ function resource(cfg) {
     generateId = null,
   } = cfg;
 
-  const COLUMNS = columnsOf(table);
-  if (!COLUMNS.length) throw new Error(`resource(): unknown table "${table}"`);
-
-  const isColumn = (c) => COLUMNS.includes(c);
-  const safeSearchable = searchable.filter(isColumn);
-  const safeFilterable = filterable.filter(isColumn);
+  let meta = null;
+  async function describe() {
+    if (meta) return meta;
+    const COLUMNS = await columnsOf(table);
+    const isColumn = (c) => COLUMNS.includes(c);
+    meta = {
+      COLUMNS,
+      isColumn,
+      safeSearchable: searchable.filter(isColumn),
+      safeFilterable: filterable.filter(isColumn),
+    };
+    return meta;
+  }
+  warmers.push(describe);
 
   const router = express.Router();
 
   // ---- list ----------------------------------------------------------
-  router.get('/', requires(`${entity}:read`), wrap((req, res) => {
+  router.get('/', requires(`${entity}:read`), wrap(async (req, res) => {
+    const { isColumn, safeSearchable, safeFilterable } = await describe();
     const where = [];
     const params = [];
 
@@ -85,10 +119,10 @@ function resource(cfg) {
     const { limit, offset, page } = pagination(req.query);
     const clause = where.length ? `WHERE ${where.join(' AND ')}` : '';
 
-    const total = db.prepare(`SELECT COUNT(*) AS n FROM ${table} ${clause}`)
-      .get(...params).n;
+    const { n: total } = await db.prepare(`SELECT COUNT(*) AS n FROM ${table} ${clause}`)
+      .get(...params);
 
-    const rows = db.prepare(
+    const rows = await db.prepare(
       `SELECT * FROM ${table} ${clause} ORDER BY ${sort} ${order} LIMIT ? OFFSET ?`
     ).all(...params, limit, offset);
 
@@ -99,12 +133,12 @@ function resource(cfg) {
   }));
 
   // ---- read one ------------------------------------------------------
-  router.get('/:id', requires(`${entity}:read`), wrap((req, res) => {
-    const row = db.prepare(`SELECT * FROM ${table} WHERE ${pk} = ?`).get(req.params.id);
+  router.get('/:id', requires(`${entity}:read`), wrap(async (req, res) => {
+    const row = await db.prepare(`SELECT * FROM ${table} WHERE ${pk} = ?`).get(req.params.id);
     if (!row) throw notFound(`${entity} ${req.params.id} not found`);
 
     for (const [key, child] of Object.entries(children)) {
-      row[key] = db.prepare(
+      row[key] = await db.prepare(
         `SELECT * FROM ${child.table} WHERE ${child.fk} = ? ORDER BY ${child.orderBy || 'id'}`
       ).all(req.params.id);
     }
@@ -112,7 +146,8 @@ function resource(cfg) {
   }));
 
   // ---- create --------------------------------------------------------
-  router.post('/', requires(`${entity}:create`), wrap((req, res) => {
+  router.post('/', requires(`${entity}:create`), wrap(async (req, res) => {
+    const { COLUMNS } = await describe();
     const body = req.body || {};
     const row = {};
     for (const col of COLUMNS) {
@@ -121,28 +156,29 @@ function resource(cfg) {
     if (!row[pk] && generateId) row[pk] = generateId(body);
     if (!row[pk]) throw badRequest(`${pk} is required`);
 
-    const exists = db.prepare(`SELECT 1 FROM ${table} WHERE ${pk} = ?`).get(row[pk]);
+    const exists = await db.prepare(`SELECT 1 FROM ${table} WHERE ${pk} = ?`).get(row[pk]);
     if (exists) throw conflict(`${entity} ${row[pk]} already exists`);
 
     const cols = Object.keys(row);
     if (!cols.length) throw badRequest('no recognised fields in the request body');
 
     try {
-      db.prepare(
+      await db.prepare(
         `INSERT INTO ${table} (${cols.join(',')}) VALUES (${cols.map(() => '?').join(',')})`
       ).run(...cols.map((c) => row[c]));
     } catch (err) {
       throw translate(err);
     }
 
-    const saved = db.prepare(`SELECT * FROM ${table} WHERE ${pk} = ?`).get(row[pk]);
-    audit.forRequest(req)('create', entity, row[pk], null, saved);
+    const saved = await db.prepare(`SELECT * FROM ${table} WHERE ${pk} = ?`).get(row[pk]);
+    await audit.forRequest(req)('create', entity, row[pk], null, saved);
     res.status(201).json({ data: saved });
   }));
 
   // ---- update --------------------------------------------------------
-  router.patch('/:id', requires(`${entity}:update`), wrap((req, res) => {
-    const before = db.prepare(`SELECT * FROM ${table} WHERE ${pk} = ?`).get(req.params.id);
+  router.patch('/:id', requires(`${entity}:update`), wrap(async (req, res) => {
+    const { COLUMNS } = await describe();
+    const before = await db.prepare(`SELECT * FROM ${table} WHERE ${pk} = ?`).get(req.params.id);
     if (!before) throw notFound(`${entity} ${req.params.id} not found`);
 
     const body = req.body || {};
@@ -160,30 +196,30 @@ function resource(cfg) {
 
     const cols = Object.keys(patch);
     try {
-      db.prepare(
+      await db.prepare(
         `UPDATE ${table} SET ${cols.map((c) => `${c} = ?`).join(', ')} WHERE ${pk} = ?`
       ).run(...cols.map((c) => patch[c]), req.params.id);
     } catch (err) {
       throw translate(err);
     }
 
-    const after = db.prepare(`SELECT * FROM ${table} WHERE ${pk} = ?`).get(req.params.id);
+    const after = await db.prepare(`SELECT * FROM ${table} WHERE ${pk} = ?`).get(req.params.id);
     const prev = {};
     for (const c of cols) prev[c] = before[c];
-    audit.forRequest(req)('update', entity, req.params.id, prev, patch);
+    await audit.forRequest(req)('update', entity, req.params.id, prev, patch);
     res.json({ data: after, changed: true });
   }));
 
   // ---- delete --------------------------------------------------------
-  router.delete('/:id', requires(`${entity}:delete`), wrap((req, res) => {
-    const before = db.prepare(`SELECT * FROM ${table} WHERE ${pk} = ?`).get(req.params.id);
+  router.delete('/:id', requires(`${entity}:delete`), wrap(async (req, res) => {
+    const before = await db.prepare(`SELECT * FROM ${table} WHERE ${pk} = ?`).get(req.params.id);
     if (!before) throw notFound(`${entity} ${req.params.id} not found`);
     try {
-      db.prepare(`DELETE FROM ${table} WHERE ${pk} = ?`).run(req.params.id);
+      await db.prepare(`DELETE FROM ${table} WHERE ${pk} = ?`).run(req.params.id);
     } catch (err) {
       throw translate(err);
     }
-    audit.forRequest(req)('delete', entity, req.params.id, before, null);
+    await audit.forRequest(req)('delete', entity, req.params.id, before, null);
     res.json({ ok: true, deleted: req.params.id });
   }));
 
@@ -217,4 +253,4 @@ function translate(err) {
   return err;
 }
 
-module.exports = { resource, columnsOf };
+module.exports = { resource, columnsOf, warmup };

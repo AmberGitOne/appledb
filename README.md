@@ -37,11 +37,16 @@ npm start
 
 Then open **http://localhost:4000**.
 
-No C++ toolchain is needed. `better-sqlite3` ships prebuilt binaries, and the
+No C++ toolchain is needed. `@libsql/client` ships prebuilt binaries, and the
 committed `.npmrc` sets `ignore-scripts=true` so npm uses them instead of
 trying to rebuild from source — which would otherwise fail on any machine
 without Visual Studio, Xcode or build-essential. Install takes a couple of
 seconds.
+
+The same client talks to a local SQLite file or to a hosted Turso database,
+so the code path is identical on a laptop, on a server with a disk, and on a
+serverless host. Set `TURSO_DATABASE_URL` to switch; leave it unset for the
+local file.
 
 Optionally copy `.env.example` to `.env` to change the port, database path or
 JWT secret. The app runs on sensible defaults without it.
@@ -78,7 +83,7 @@ server/
   index.js              Express app, static hosting, error handling
   db/
     schema.sql          the entire relational model
-    index.js            connection (WAL, foreign keys on)
+    index.js            libSQL client: local file or Turso, async statements
     migrate.js          migration runner, checksum-tracked
     seed.js             loads data/seed.json into the tables
   lib/
@@ -195,6 +200,13 @@ suppliers). `PUT /api/state` does the reverse, and it **reconciles rather than
 overwrites**: it loads what is stored, compares it against what arrived, and
 issues only the `INSERT` / `UPDATE` / `DELETE` statements that correspond to
 real changes — all inside one transaction.
+
+That transaction is worth a note. Statements are asynchronous, so a
+transaction cannot simply be "the next few statements" the way it was under a
+synchronous driver. `server/db/index.js` keeps the open transaction in an
+`AsyncLocalStorage`, and every statement looks there first: call sites go on
+using the shared `db`, while two concurrent saves can never land in each
+other's transaction.
 
 That matters for two reasons. Saving unchanged state writes nothing and
 produces no audit noise. And when something does change, the audit row records

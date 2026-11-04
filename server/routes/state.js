@@ -20,9 +20,9 @@ const { requires } = require('../middleware/auth');
 
 const router = express.Router();
 
-router.get('/', requires('tickets:read'), wrap((req, res) => {
+router.get('/', requires('tickets:read'), wrap(async (req, res) => {
   res.json({
-    data: readState(),
+    data: await readState(),
     meta: {
       user: req.user
         ? { id: req.user.id, name: req.user.name, role: req.user.role_name }
@@ -32,14 +32,14 @@ router.get('/', requires('tickets:read'), wrap((req, res) => {
   });
 }));
 
-router.put('/', requires('tickets:update'), wrap((req, res) => {
+router.put('/', requires('tickets:update'), wrap(async (req, res) => {
   const incoming = req.body && req.body.data ? req.body.data : req.body;
   if (!incoming || typeof incoming !== 'object' || Array.isArray(incoming)) {
     throw badRequest('Request body must be the state object, or { data: state }');
   }
 
   const started = Date.now();
-  const changes = writeState(incoming, req.user);
+  const changes = await writeState(incoming, req.user);
   const tables = Object.keys(changes);
 
   let rows = 0;
@@ -55,13 +55,13 @@ router.put('/', requires('tickets:update'), wrap((req, res) => {
   });
 }));
 
-router.post('/reset', requires('settings:update'), wrap((req, res) => {
+router.post('/reset', requires('settings:update'), wrap(async (req, res) => {
   // Re-run the seeder in-process; it manages its own transaction.
   const { seed } = require('../db/seed');
-  db.transaction(seed)();
-  audit.record(req.user, 'reset', 'database', '', null,
+  await db.transaction(seed)();
+  await audit.record(req.user, 'reset', 'database', '', null,
     { at: new Date().toISOString() }, req.ip);
-  res.json({ ok: true, data: readState() });
+  res.json({ ok: true, data: await readState() });
 }));
 
 module.exports = router;
